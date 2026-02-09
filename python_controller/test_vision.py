@@ -6,7 +6,10 @@ Tests face and color tracking with live preview
 
 import sys
 import cv2
-sys.path.insert(0, '/home/runner/work/DATT3700/DATT3700/python_controller')
+
+# Allow importing from same directory
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from vision_tracker import FaceTracker, ColorTracker
 

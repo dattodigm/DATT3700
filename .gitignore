@@ -51,3 +51,7 @@ pid_log.csv
 *.hex
 *.elf
 *.map
+
+# WiFi Credentials (if using separate config)
+esp32_firmware/wifi_config.h
+*_credentials.h

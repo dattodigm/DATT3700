@@ -15,9 +15,11 @@
 #include <OSCMessage.h>
 #include <ESP32Servo.h>
 
-// WiFi credentials - UPDATE THESE
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// WiFi credentials - UPDATE THESE BEFORE UPLOADING
+// IMPORTANT: Do not commit your actual WiFi credentials to version control!
+// For production, consider using WiFi Manager library or a separate config file
+const char* ssid = "YOUR_WIFI_SSID";      // Replace with your WiFi network name
+const char* password = "YOUR_WIFI_PASSWORD";  // Replace with your WiFi password
 
 // OSC UDP settings
 const unsigned int localPort = 8000;

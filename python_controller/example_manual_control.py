@@ -7,7 +7,10 @@ Useful for testing hardware setup.
 
 import sys
 import time
-sys.path.insert(0, '/home/runner/work/DATT3700/DATT3700/python_controller')
+
+# Allow importing from same directory
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from osc_client import FlowerOSCClient
 

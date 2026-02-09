@@ -57,11 +57,16 @@ ESP32 5V → Servo Power (Red wires)
 
 4. **Configure WiFi:**
    - Open `esp32_firmware/flower_control.ino`
-   - Update lines 21-22:
+   - Update lines 19-23:
    ```cpp
    const char* ssid = "YOUR_WIFI_NAME";
    const char* password = "YOUR_WIFI_PASSWORD";
    ```
+   
+   **Alternative (More Secure):**
+   - Copy `esp32_firmware/wifi_credentials_template.h` to `wifi_config.h`
+   - Edit `wifi_config.h` with your credentials (this file is .gitignored)
+   - In `flower_control.ino`, replace lines 19-23 with: `#include "wifi_config.h"`
 
 5. **Upload:**
    - Connect ESP32 via USB
