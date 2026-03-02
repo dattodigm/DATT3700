@@ -63,7 +63,7 @@ Default: `0.3`
 
 `jealousy_trigger_seconds` (default 5.0): seconds of continuous `Empathy` on the primary flower before siblings become `Jealous`.
 
-Override duration is hardcoded at 8 seconds (`persona_engine.py` line `override_until = time.time() + 8.0`).
+`jealousy_burst_seconds` (default 8.0): how long the `Jealous` override lasts. Both are configurable in `config.ini` under `[Personas]`.
 
 ---
 

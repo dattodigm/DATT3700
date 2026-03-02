@@ -55,6 +55,7 @@ class PersonaEngine:
         self.config = config
         self.ema_alpha = config.getfloat('Personas', 'ema_alpha', fallback=0.3)
         self.jealousy_trigger = config.getfloat('Personas', 'jealousy_trigger_seconds', fallback=5.0)
+        self.jealousy_burst = config.getfloat('Personas', 'jealousy_burst_seconds', fallback=8.0)
         
         self.states: Dict[str, DeviceState] = {
             name: DeviceState(name=name) for name in device_names
@@ -154,7 +155,7 @@ class PersonaEngine:
                     if name != primary_device and not self.states[name].is_overridden():
                         logger.info(f"[Jealousy] Device '{name}' becomes Jealous!")
                         self._apply_persona(self.states[name], 'Jealous')
-                        self.states[name].override_until = time.time() + 8.0  # 8s jealous burst
+                        self.states[name].override_until = time.time() + self.jealousy_burst
         else:
             self._empathy_start[primary_device] = None
         
