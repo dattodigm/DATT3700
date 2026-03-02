@@ -16,12 +16,12 @@
 | Motor A (−) | 26 | M1_B |
 | Motor B (+) | 18 | M2_A |
 | Motor B (−) | 19 | M2_B |
-| LED1 Red    | 2  | 220Ω resistor in series |
-| LED1 Green  | 4  | 220Ω resistor in series |
-| LED1 Blue   | 5  | 220Ω resistor in series |
-| LED2 Red    | 12 | 220Ω resistor in series |
-| LED2 Green  | 13 | 220Ω resistor in series |
-| LED2 Blue   | 14 | 220Ω resistor in series |
+| LED1 Red    | 2  | 220Ω–330Ω resistor in series (adjust for LED Vf) |
+| LED1 Green  | 4  | 220Ω–330Ω resistor in series |
+| LED1 Blue   | 5  | 220Ω–330Ω resistor in series |
+| LED2 Red    | 12 | 220Ω–330Ω resistor in series |
+| LED2 Green  | 13 | 220Ω–330Ω resistor in series |
+| LED2 Blue   | 14 | 220Ω–330Ω resistor in series |
 
 ### WiFi / OSC
 - **Mode**: Access Point (AP)

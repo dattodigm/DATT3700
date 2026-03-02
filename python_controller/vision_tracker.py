@@ -159,11 +159,20 @@ class VisionTracker:
         
         return annotated, data
     
+    # Distance estimation calibration constants
+    DISTANCE_CALIBRATION_FACTOR = 0.15  # empirical: ~15cm reference face width
+    DISTANCE_MIN_METERS = 0.3
+    DISTANCE_MAX_METERS = 5.0
+
     @staticmethod
     def estimate_distance(face_area_ratio: float) -> float:
         if face_area_ratio <= 0:
-            return 3.0
-        return max(0.3, min(5.0, 0.15 / math.sqrt(face_area_ratio)))
+            return VisionTracker.DISTANCE_MAX_METERS
+        return max(
+            VisionTracker.DISTANCE_MIN_METERS,
+            min(VisionTracker.DISTANCE_MAX_METERS,
+                VisionTracker.DISTANCE_CALIBRATION_FACTOR / math.sqrt(face_area_ratio))
+        )
     
     @staticmethod
     def calculate_pose_openness(pose_landmarks) -> float:
@@ -180,7 +189,8 @@ class VisionTracker:
             wrist_spread = abs(rw.x - lw.x)
             openness = min(1.0, wrist_spread / (shoulder_width * 3.0))
             return openness
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[Vision] Pose openness calculation failed: {e}")
             return 0.5
     
     @staticmethod

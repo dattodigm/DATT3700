@@ -104,7 +104,7 @@ class ControlPanel:
         info_frame.pack(fill='x', padx=6, pady=4)
         self._info_labels = {}
         info_fields = [('dominant', 'Emotion'), ('age', 'Age'), ('gender', 'Gender'),
-                       ('distance', 'Distance'), ('persons', 'Persons'), ('pose', 'Pose'),('color', 'Color')]
+                       ('distance', 'Distance'), ('persons', 'Persons'), ('pose', 'Pose'), ('color', 'Color')]
         for key, label_text in info_fields:
             row = ttk.Frame(info_frame)
             row.pack(fill='x', pady=1)

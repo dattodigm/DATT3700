@@ -168,8 +168,10 @@ class PersonaEngine:
         alpha = self.ema_alpha
         
         # Add jitter (Layer 3 physical render)
+        # JITTER_SCALE: maps 0-1 jitter param to ±0.2 openness variation
+        JITTER_SCALE = 0.2
         jitter_amount = params['jitter']
-        jitter = (random.random() - 0.5) * 2.0 * jitter_amount * 0.2
+        jitter = (random.random() - 0.5) * 2.0 * jitter_amount * JITTER_SCALE
         
         target_openness = params['openness'] + jitter
         target_openness = max(0.0, min(1.0, target_openness))
@@ -195,7 +197,10 @@ class PersonaEngine:
             if device is None:
                 continue
             # Set motor direction from openness
-            direction = 1 if state.openness > 0.6 else (-1 if state.openness < 0.3 else 0)
+            # Hysteresis thresholds: open>0.6, close<0.3, hold otherwise
+            OPEN_THRESHOLD = 0.6
+            CLOSE_THRESHOLD = 0.3
+            direction = 1 if state.openness > OPEN_THRESHOLD else (-1 if state.openness < CLOSE_THRESHOLD else 0)
             device.set_motor(1, direction)
             # Set LEDs
             device.set_led_hsv(1, state.led_hue, state.led_sat, state.led_bri)
