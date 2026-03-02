@@ -2,485 +2,131 @@
 
 ## Overview
 
-The Vision PID Control System consists of three main components:
-
-1. **Vision Processing** (Python + OpenCV)
-2. **Control Algorithm** (PID Controller)
-3. **Hardware Control** (ESP32 + OSC)
-
-## Component Architecture
+Digital Bloom uses a three-layer biomorphic control architecture:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Computer System                        │
-│                                                          │
-│  ┌────────────────────────────────────────────────┐    │
-│  │         Vision Processing Module                │    │
-│  │                                                  │    │
-│  │  ┌──────────┐    ┌────────────────────────┐   │    │
-│  │  │  Camera  │───→│  OpenCV Processing     │   │    │
-│  │  │  Input   │    │  - Face Detection      │   │    │
-│  │  └──────────┘    │  - Color Detection     │   │    │
-│  │                   │  - Error Calculation   │   │    │
-│  │                   └────────────┬───────────┘   │    │
-│  └─────────────────────────────────┼──────────────┘    │
-│                                     │                    │
-│                                     │ (x_error, y_error) │
-│                                     ▼                    │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │          PID Control Module                      │   │
-│  │                                                   │   │
-│  │  ┌──────────────┐        ┌──────────────┐      │   │
-│  │  │  PID Pan     │        │  PID Tilt    │      │   │
-│  │  │  Controller  │        │  Controller  │      │   │
-│  │  │              │        │              │      │   │
-│  │  │  Kp, Ki, Kd  │        │  Kp, Ki, Kd  │      │   │
-│  │  └──────┬───────┘        └──────┬───────┘      │   │
-│  │         │                        │               │   │
-│  │         │ pan_correction        │ tilt_correction│  │
-│  │         └────────┬───────────────┘               │   │
-│  └──────────────────┼────────────────────────────  │   │
-│                      │                                   │
-│                      │ (servo_angles, flower_state)      │
-│                      ▼                                   │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         OSC Communication Module                 │   │
-│  │                                                   │   │
-│  │  ┌──────────────────────────────────────────┐  │   │
-│  │  │  UDP Client (python-osc)                  │  │   │
-│  │  │  - /flower/servo  [pan, tilt]            │  │   │
-│  │  │  - /flower/state  [openness]             │  │   │
-│  │  │  - /flower/motor  [speed]                │  │   │
-│  │  │  - /flower/mode   [tracking]             │  │   │
-│  │  └──────────────────┬───────────────────────┘  │   │
-│  └─────────────────────┼──────────────────────────┘   │
-└─────────────────────────┼────────────────────────────  ┘
-                          │
-                          │ WiFi/UDP
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                     ESP32 System                         │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         WiFi + OSC Server Module                 │   │
-│  │                                                   │   │
-│  │  ┌──────────────────────────────────────────┐  │   │
-│  │  │  UDP Server (OSC Library)                 │  │   │
-│  │  │  Listens on port 8000                     │  │   │
-│  │  │  Parses OSC messages                      │  │   │
-│  │  └──────────────────┬───────────────────────┘  │   │
-│  └─────────────────────┼──────────────────────────┘   │
-│                         │                               │
-│                         │ (commands)                    │
-│                         ▼                               │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │         Hardware Control Module                  │   │
-│  │                                                   │   │
-│  │  ┌──────────────┐  ┌──────────────┐            │   │
-│  │  │ Servo Driver │  │ Motor Driver │            │   │
-│  │  │              │  │              │            │   │
-│  │  │ GPIO 18, 19  │  │ GPIO 25-27   │            │   │
-│  │  └──────┬───────┘  └──────┬───────┘            │   │
-│  └─────────┼──────────────────┼────────────────────┘   │
-│             │                  │                         │
-└─────────────┼──────────────────┼────────────────────────┘
-              │                  │
-              ▼                  ▼
-      ┌──────────────┐   ┌──────────────┐
-      │   Servos     │   │   DC Motor   │
-      │  (Pan/Tilt)  │   │  (Flower)    │
-      └──────────────┘   └──────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│  PC / Python Controller                                        │
+│                                                                │
+│  Layer 1: ML Brain         Emotion probabilities (7-dim)       │
+│           (scikit-learn)   + distance + pose openness          │
+│               │                    │                           │
+│               ▼                    │                           │
+│           Persona Label ◄──────────┘                          │
+│  (Empathy / Defensive / Predatory / Boredom / Surprise / Jealous)│
+│               │                                                │
+│  Layer 2: State Machine    lookup PERSONA_PARAMS dict          │
+│           + Jealousy Network: if flower A held Empathy >5s     │
+│             → force flower B/C into 'Jealous' for 8s           │
+│               │                                                │
+│  Layer 3: Motion Render    EMA smoothing (alpha=0.3)           │
+│           discrete params  + Perlin-like jitter                │
+│               │                                                │
+│          OSC / UDP ─────────────────────────────────────────┐  │
+└─────────────────────────────────────────────────────────────┼──┘
+                                                              │
+                         WiFi (ESP32 AP or existing LAN)      │
+                                                              │
+┌───────────────────────────────────────────────────────────  ▼  ┐
+│  ESP32 Flowers (Sylvie / Sue)                                   │
+│                                                                │
+│  OSC Server (port 8888) → DC motors + RGB LEDs                 │
+│  OR servo + ultrasonic                                         │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow
+## Layer 1 — ML Brain
 
-### 1. Vision Processing Flow
+**File**: `persona_engine.py` (`PersonaEngine.predict_persona`)
+
+Input features (10-dim):
+- 7 emotion probabilities from DeepFace: `angry, disgust, fear, happy, sad, surprise, neutral`
+- `distance_estimate` (metres, derived from face bounding box area)
+- `face_area` (normalised 0–1)
+- `pose_openness` (MediaPipe wrist/shoulder spread, 0–1)
+
+Classifier: `RandomForestClassifier` (default) or `SVC` (configurable in `config.ini`)
+
+When no model is trained, a heuristic rule-set is used (see `_heuristic_persona`).
+
+## Layer 2 — State Machine / Nervous System
+
+**File**: `persona_engine.py` (`PERSONA_PARAMS`, `PersonaEngine.update`)
+
+Each persona maps to hardware parameters:
+
+| Persona   | Openness | Jitter | Speed | LED Hue |
+|-----------|----------|--------|-------|---------|
+| Empathy   | 1.0      | 0.0    | 0.4   | 120 (green) |
+| Defensive | 0.1      | 0.2    | 0.2   | 240 (blue) |
+| Predatory | 0.7      | 0.1    | 0.8   | 0 (red) |
+| Boredom   | 0.3      | 0.0    | 0.1   | 200 (cool blue) |
+| Surprise  | 1.0      | 1.0    | 1.0   | 60 (yellow) |
+| Jealous   | 0.6      | 0.5    | 0.6   | 0 (red) |
+
+**Jealousy Network**: If the primary device stays in `Empathy` for >5 seconds, all other devices are force-overridden to `Jealous` for 8 seconds.
+
+## Layer 3 — Physical Rendering
+
+**File**: `persona_engine.py` (`PersonaEngine._apply_persona`)
+
+- **EMA smoothing**: `state = prev * (1 - α) + target * α` — prevents abrupt jumps
+- **Jitter**: random noise added to openness proportional to `jitter` param
+- Alpha configurable via `config.ini` `[Personas] ema_alpha`
+
+## Vision Pipeline
+
+**File**: `vision_tracker.py`
 
 ```
-Camera Frame (640x480 BGR)
-        │
-        ▼
-    Preprocessing
-    (flip, grayscale)
-        │
-        ▼
-┌───────┴────────┐
-│                │
-▼                ▼
-Face Detection   Color Detection
-(Haar Cascade)   (HSV Masking)
-│                │
-└───────┬────────┘
-        │
-        ▼
-   Target Center (x, y)
-        │
-        ▼
-   Calculate Error
-   error_x = target_x - center_x
-   error_y = target_y - center_y
-```
-
-### 2. PID Control Flow
-
-```
-Error Input
+Webcam frame (BGR)
     │
-    ▼
-┌────────────────┐
-│ Calculate:     │
-│                │
-│ P = Kp × error │
-│ I = Ki × ∫error│
-│ D = Kd × d/dt  │
-└───────┬────────┘
-        │
-        ▼
-    output = P + I + D
-        │
-        ▼
-    Clamp to limits
-        │
-        ▼
-    Correction Value
+    ├──▶ MediaPipe Pose ──▶ pose_openness (0–1)
+    │
+    └──▶ DeepFace.analyze ──▶ emotions dict, age, gender, face region
+              │
+              ├──▶ face_area → distance_estimate
+              └──▶ k-means colour → dominant_color hex
 ```
 
-### 3. Communication Flow
+DeepFace runs every 5 frames (configurable) to keep latency low.
+MediaPipe runs every frame (lightweight).
+
+## Communication
+
+Protocol: **OSC over UDP** (python-osc → arduino-osc library)
+
+Actual esp32_sylvie commands:
+
+| OSC Address | Args | Description |
+|-------------|------|-------------|
+| `/auto` | `[0\|1]` | Switch auto/manual mode |
+| `/motor1` | `[1\|-1\|0]` | DC motor A: open/close/stop |
+| `/motor2` | `[1\|-1\|0]` | DC motor B |
+| `/led1` | `[r, g, b]` | RGB LED 1 (0–255 each) |
+| `/led2` | `[r, g, b]` | RGB LED 2 |
+| `/preset` | `[1\|2\|3]` | Scene presets |
+
+Default ESP32 AP: `192.168.4.1:8888`
+
+## File Structure
 
 ```
-Python (Client)              ESP32 (Server)
-     │                            │
-     │  OSC /flower/servo         │
-     │  [90, 90]                  │
-     ├───────────────────────────→│
-     │                            │
-     │                      Parse OSC
-     │                            │
-     │                     Set Servo Angles
-     │                        servo.write()
-     │                            │
-     │  (Next command...)         │
-     ├───────────────────────────→│
+python_controller/
+├── main.py              # Entry point
+├── config.ini           # All configuration
+├── vision_tracker.py    # DeepFace + MediaPipe
+├── osc_client.py        # Multi-device OSC network
+├── persona_engine.py    # 3-layer control engine
+├── ml_trainer.py        # sklearn classifier training
+├── control_panel.py     # Tkinter GUI
+├── pid_controller.py    # PID (retained for servo tuning)
+└── requirements.txt
+
+esp32_firmware/
+├── eps32_sylvie/        # DC motor + LED firmware (main)
+│   ├── esp32_sylvie.ino
+│   └── sylvie.ino
+└── esp32_sue/           # Servo + ultrasonic firmware
+    └── servo.ino
 ```
-
-## Module Details
-
-### Python Controller Modules
-
-#### `vision_tracker.py`
-- **Purpose**: Object detection and tracking
-- **Classes**:
-  - `VisionTracker`: Base class
-  - `FaceTracker`: Haar Cascade face detection
-  - `ColorTracker`: HSV color-based tracking
-- **Output**: (x_error, y_error, detected)
-
-#### `pid_controller.py`
-- **Purpose**: Error correction algorithm
-- **Algorithm**: Proportional-Integral-Derivative control
-- **Features**:
-  - Anti-windup
-  - Output limiting
-  - Sample time control
-- **Output**: correction value
-
-#### `osc_client.py`
-- **Purpose**: Network communication with ESP32
-- **Protocol**: OSC over UDP
-- **Commands**:
-  - Servo control
-  - Flower state
-  - Motor speed
-  - Tracking mode
-
-#### `main.py`
-- **Purpose**: Main application loop
-- **Responsibilities**:
-  - Initialize all modules
-  - Run control loop
-  - Handle user input
-  - Display feedback
-
-### ESP32 Firmware Modules
-
-#### WiFi Module
-- Connect to network
-- Obtain IP address via DHCP
-- Maintain connection
-
-#### OSC Server Module
-- Listen on UDP port 8000
-- Parse OSC messages
-- Route to handlers
-
-#### Servo Control Module
-- ESP32Servo library
-- PWM generation (50Hz)
-- Position control (0-180°)
-
-#### Motor Control Module
-- H-bridge driver control
-- PWM speed control
-- Direction control
-
-## Timing and Performance
-
-### Python Controller
-
-| Component | Rate | Latency |
-|-----------|------|---------|
-| Camera Capture | 30 FPS | ~33ms |
-| Vision Processing | 30 FPS | ~10-30ms |
-| PID Update | 33 Hz | <1ms |
-| OSC Send | As needed | <5ms |
-
-**Total Loop Time**: ~50-70ms (15-20 FPS effective)
-
-### ESP32 Firmware
-
-| Component | Rate | Response |
-|-----------|------|----------|
-| WiFi Poll | Continuous | <1ms |
-| OSC Parse | On packet | <1ms |
-| Servo Update | Immediate | ~20ms (servo) |
-| Motor Update | Immediate | <1ms (PWM) |
-
-**Network Latency**: 5-20ms on local WiFi
-
-### End-to-End Latency
-
-```
-Camera → Processing → PID → OSC → Network → ESP32 → Servo
- 33ms      20ms       1ms    5ms    10ms     1ms     20ms
-
-Total: ~90ms (acceptable for human tracking)
-```
-
-## State Management
-
-### Python Controller State
-
-```python
-{
-    'tracking_active': bool,      # Is tracking enabled?
-    'pan_angle': float (0-180),   # Current pan position
-    'tilt_angle': float (0-180),  # Current tilt position
-    'flower_openness': float (0-1), # Flower open state
-    'lost_target_time': float,    # When target was lost
-}
-```
-
-### ESP32 State
-
-```cpp
-{
-    currentPanAngle: int (0-180),
-    currentTiltAngle: int (0-180),
-    currentFlowerState: float (0.0-1.0),
-    currentMotorSpeed: int (-100 to 100),
-    trackingMode: bool
-}
-```
-
-## Error Handling
-
-### Python Controller
-
-```
-Try:
-    Capture frame
-    Process vision
-    Calculate PID
-    Send OSC
-Except:
-    Camera error → Retry or exit
-    Network error → Log and continue
-    Keyboard interrupt → Clean shutdown
-```
-
-### ESP32
-
-```
-If OSC parse error:
-    Log to Serial
-    Continue (ignore bad packet)
-
-If servo/motor error:
-    Log to Serial
-    Continue (may need hardware reset)
-```
-
-## Configuration Parameters
-
-### PID Tuning Parameters
-
-Located in `config.ini`:
-
-```ini
-[PID_Pan]
-kp = 0.15          # Responsiveness
-ki = 0.01          # Steady-state error correction
-kd = 0.05          # Oscillation damping
-output_limit = 30  # Max angle change per update
-
-[PID_Tilt]
-kp = 0.15
-ki = 0.01
-kd = 0.05
-output_limit = 30
-```
-
-### Vision Parameters
-
-```ini
-[Tracking]
-tracker_type = face  # or 'color'
-
-[ColorTracking]
-lower_hsv = 0, 120, 70    # Red color range
-upper_hsv = 10, 255, 255
-```
-
-### Network Parameters
-
-```ini
-[Network]
-esp32_ip = 192.168.1.100
-esp32_port = 8000
-```
-
-## Scalability and Extensions
-
-### Adding New Trackers
-
-Extend `VisionTracker` base class:
-
-```python
-class MyTracker(VisionTracker):
-    def get_tracking_error(self, frame):
-        # Implement custom tracking
-        return (x_error, y_error, detected)
-```
-
-### Adding New Behaviors
-
-Modify `FlowerControlSystem.run()` in `main.py`:
-
-```python
-if detected:
-    # Custom behavior here
-    if distance < threshold:
-        self.flower_openness = 1.0
-```
-
-### Multiple Flowers
-
-Create multiple OSC clients:
-
-```python
-flower1 = FlowerOSCClient("192.168.1.100", 8000)
-flower2 = FlowerOSCClient("192.168.1.101", 8000)
-```
-
-### Advanced Vision
-
-Replace trackers with ML models:
-- MediaPipe for pose detection
-- YOLO for object detection
-- OpenPose for body tracking
-
-## Security Considerations
-
-### Network Security
-
-- OSC over UDP is unencrypted
-- Use on trusted networks only
-- Consider VPN for remote access
-- Firewall rules to limit access
-
-### Physical Safety
-
-- Limit servo speed (output_limits)
-- Limit servo range (0-180° clamping)
-- Emergency stop mechanism
-- Physical limit switches
-
-## Performance Optimization
-
-### Python
-
-1. **Reduce resolution**: 320x240 for faster processing
-2. **Skip frames**: Process every Nth frame
-3. **Optimize detection**: Reduce search region
-4. **Multi-threading**: Separate capture and processing
-
-### ESP32
-
-1. **Servo updates**: Only when angle changes
-2. **Motor smoothing**: Ramp speed changes
-3. **WiFi optimization**: Static IP (faster than DHCP)
-4. **Minimize Serial**: Reduce debug output
-
-## Testing Strategy
-
-### Unit Tests
-
-- `test_pid.py`: PID algorithm correctness
-- Individual module tests
-
-### Integration Tests
-
-- `test_osc.py`: Network communication
-- `test_vision.py`: Camera and tracking
-
-### System Tests
-
-- Full system with manual control
-- Live tracking performance
-- Stress testing (rapid movements)
-
-## Debugging
-
-### Enable Verbose Logging
-
-Python:
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-ESP32:
-```cpp
-// In loop(), add:
-Serial.print("Pan: ");
-Serial.println(currentPanAngle);
-```
-
-### Common Debug Points
-
-1. **Vision**: Display detected regions
-2. **PID**: Log error and output values
-3. **Network**: Monitor packet transmission
-4. **Servos**: Verify angle commands
-5. **Timing**: Measure loop frequencies
-
-## Performance Metrics
-
-Track these for optimization:
-
-- **Frame Rate**: Target 20+ FPS
-- **Detection Rate**: Target 90%+ when object visible
-- **Response Time**: Target <100ms end-to-end
-- **Tracking Accuracy**: Target ±5 pixels error
-- **Servo Smoothness**: No visible jitter
-
-## Future Enhancements
-
-1. **Machine Learning**: Train custom object detector
-2. **Multi-target**: Track multiple objects
-3. **Predictive Control**: Anticipate movements
-4. **Adaptive PID**: Auto-tune based on performance
-5. **Web Interface**: Browser-based control panel
-6. **Data Logging**: Record and analyze sessions
-7. **Voice Control**: Add speech recognition
-8. **Mobile App**: Android/iOS control
