@@ -19,9 +19,18 @@ from typing import Dict, List, Optional
 class FlowerClient:
     """
     单个花朵的OSC客户端
+    
+    支持多种硬件类型：
+    - dc_motor: DC电机（开合）
+    - servo: Servo舵机（旋转或追踪）
+    - servo_tracking: Servo舵机（8轴人脸追踪底座）
+    - composite: 复合类型（DC+Servo，如Sylvie）
     """
     
-    def __init__(self, flower_id: str, name: str, ip: str, port: int = 8888):
+    HARDWARE_TYPES = ['dc_motor', 'servo', 'servo_tracking', 'composite']
+    
+    def __init__(self, flower_id: str, name: str, ip: str, port: int = 8888, 
+                 hardware_type: str = 'dc_motor'):
         """
         初始化花朵客户端
         
@@ -30,11 +39,16 @@ class FlowerClient:
             name: 花朵名称
             ip: ESP32的IP地址
             port: OSC端口号
+            hardware_type: 硬件类型 ('dc_motor', 'servo', 'servo_tracking', 'composite')
         """
         self.flower_id = flower_id
         self.name = name
         self.ip = ip
         self.port = port
+        self.hardware_type = hardware_type
+        
+        if hardware_type not in self.HARDWARE_TYPES:
+            raise ValueError(f"不支持的硬件类型: {hardware_type}")
         
         # 创建OSC客户端
         self.client = udp_client.SimpleUDPClient(ip, port)
@@ -47,13 +61,15 @@ class FlowerClient:
             'r': 0,
             'g': 0,
             'b': 0,
-            'label': 'BOREDOM'
+            'label': 'BOREDOM',
+            'pan': 90,    # 水平角度（舵机追踪用）
+            'tilt': 90,   # 垂直角度（舵机追踪用）
         }
         
         self.last_update = 0
         self.is_connected = True
         
-        print(f"🌸 花朵客户端已创建: {name} ({flower_id}) @ {ip}:{port}")
+        print(f"🌸 花朵客户端已创建: {name} ({flower_id}) @ {ip}:{port} [{hardware_type}]")
     
     def send_state(self, bloom: float, jitter: float, speed: float, 
                    r: int, g: int, b: int, lcd_message: str = ""):
@@ -121,6 +137,60 @@ class FlowerClient:
         except Exception as e:
             self.is_connected = False
             return False
+    
+    def send_servo_angles(self, pan: int, tilt: int):
+        """
+        发送舵机角度（用于人脸追踪）
+        
+        Args:
+            pan: 水平角度 (0-180)
+            tilt: 垂直角度 (0-180)
+        """
+        if self.hardware_type not in ['servo', 'servo_tracking', 'composite']:
+            print(f"警告: {self.name} 不支持舵机控制")
+            return
+        
+        # 限制角度范围
+        pan = max(0, min(180, int(pan)))
+        tilt = max(0, min(180, int(tilt)))
+        
+        # 发送OSC消息
+        self.client.send_message("/flower/servo", [pan, tilt])
+        
+        # 更新状态
+        self.current_state['pan'] = pan
+        self.current_state['tilt'] = tilt
+        self.last_update = time.time()
+    
+    def send_composite_command(self, bloom: float, pan: int, tilt: int,
+                               r: int = None, g: int = None, b: int = None):
+        """
+        发送复合控制命令（用于Sylvie的DC+Servo组合）
+        
+        Args:
+            bloom: 花朵开放度 (0-1.0)
+            pan: 底座水平角度
+            tilt: 底座垂直角度
+            r, g, b: LED颜色（可选）
+        """
+        if self.hardware_type != 'composite':
+            print(f"警告: {self.name} 不是复合类型")
+            return
+        
+        # 构建命令
+        args = [bloom, pan, tilt]
+        if r is not None and g is not None and b is not None:
+            args.extend([r, g, b])
+        
+        self.client.send_message("/flower/composite", args)
+        
+        # 更新状态
+        self.current_state['bloom'] = bloom
+        self.current_state['pan'] = pan
+        self.current_state['tilt'] = tilt
+        if r is not None:
+            self.current_state.update({'r': r, 'g': g, 'b': b})
+        self.last_update = time.time()
 
 
 class FlowerOrchestrator:
@@ -141,7 +211,8 @@ class FlowerOrchestrator:
         self.empathy_timers = {}
         self.jealousy_timers = {}
         
-    def add_flower(self, flower_id: str, name: str, ip: str, port: int = 8888):
+    def add_flower(self, flower_id: str, name: str, ip: str, port: int = 8888,
+                   hardware_type: str = 'dc_motor'):
         """
         添加花朵
         
@@ -150,11 +221,12 @@ class FlowerOrchestrator:
             name: 显示名称
             ip: IP地址
             port: 端口号
+            hardware_type: 硬件类型 ('dc_motor', 'servo', 'servo_tracking', 'composite')
         """
         if flower_id in self.flowers:
             print(f"警告: 花朵 {flower_id} 已存在，将覆盖")
         
-        self.flowers[flower_id] = FlowerClient(flower_id, name, ip, port)
+        self.flowers[flower_id] = FlowerClient(flower_id, name, ip, port, hardware_type)
         self.empathy_timers[flower_id] = 0
         self.jealousy_timers[flower_id] = 0
         

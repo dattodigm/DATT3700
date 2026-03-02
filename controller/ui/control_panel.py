@@ -29,8 +29,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from perception.emotion_detector import EmotionDetector
 from perception.pose_tracker import PoseTracker
+from perception.face_tracker import FaceTracker
 from decision.persona_classifier import PersonaClassifier
 from communication.flower_client import FlowerOrchestrator
+from pid_controller import ServoController
 
 
 class DigitalBloomControlPanel:
@@ -48,6 +50,8 @@ class DigitalBloomControlPanel:
         # 初始化组件
         self.emotion_detector = None
         self.pose_tracker = None
+        self.face_tracker = None
+        self.servo_controller = None
         self.classifier = None
         self.orchestrator = None
         self.cap = None
@@ -59,10 +63,37 @@ class DigitalBloomControlPanel:
         self.current_feature_vector = [0] * 11
         self.current_persona = 'BOREDOM'
         
-        # 花朵配置
+        # 追踪模式
+        self.tracking_mode = 'manual'  # 'manual' 或 'auto'
+        self.tracking_enabled = False
+        self.servo_manual_pan = 90
+        self.servo_manual_tilt = 90
+        
+        # 花朵配置（根据实际硬件更新）
+        # Sylvie: DC电机控制花朵开合 + Servo底座追踪
+        # Sue: Servo旋转花朵 + 超声波触发
         self.flowers_config = [
-            {'id': 'flower1', 'name': 'Sylvie (DC)', 'ip': '192.168.4.1', 'port': 8888},
-            {'id': 'flower2', 'name': 'Sue (Servo)', 'ip': '192.168.4.2', 'port': 8888},
+            {
+                'id': 'sylvie_base',
+                'name': 'Sylvie底座(追踪)',
+                'ip': '192.168.4.1',
+                'port': 8888,
+                'hardware_type': 'servo_tracking'
+            },
+            {
+                'id': 'sylvie_petals',
+                'name': 'Sylvie花朵(开合)',
+                'ip': '192.168.4.2',
+                'port': 8888,
+                'hardware_type': 'dc_motor'
+            },
+            {
+                'id': 'sue',
+                'name': 'Sue(旋转)',
+                'ip': '192.168.4.3',
+                'port': 8888,
+                'hardware_type': 'servo'
+            },
         ]
         
         # 创建UI
@@ -369,6 +400,20 @@ class DigitalBloomControlPanel:
             # 初始化感知组件
             self.emotion_detector = EmotionDetector(smoothing_frames=3)
             self.pose_tracker = PoseTracker(smoothing_frames=3)
+            self.face_tracker = FaceTracker(
+                frame_width=640, 
+                frame_height=480,
+                area_weight=0.7,      # 面积权重70%（距离越近越优先）
+                center_weight=0.3     # 中心位置权重30%
+            )
+            
+            # 初始化舵机控制器（用于人脸追踪）
+            self.servo_controller = ServoController(
+                pan_center=90,
+                tilt_center=90,
+                pan_range=(0, 180),
+                tilt_range=(0, 180)
+            )
             
             # 初始化ML分类器
             self.classifier = PersonaClassifier(model_type='random_forest')
@@ -382,6 +427,10 @@ class DigitalBloomControlPanel:
             self.cap = cv2.VideoCapture(0)
             if not self.cap.isOpened():
                 raise Exception("无法打开摄像头")
+            
+            # 设置分辨率
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             
             self._update_status("系统初始化完成！")
             messagebox.showinfo("成功", "系统初始化完成！")
@@ -415,23 +464,60 @@ class DigitalBloomControlPanel:
                 # 翻转图像（镜像效果）
                 frame = cv2.flip(frame, 1)
                 
-                # 分析情绪
+                # ===== 人脸追踪 =====
+                target_face, all_faces = self.face_tracker.track(frame)
+                
+                # 在画面上绘制人脸追踪结果
+                frame = self.face_tracker.draw_results(frame, target_face, all_faces)
+                
+                # 更新距离显示（如果有目标）
+                if target_face:
+                    distance = self.face_tracker.get_distance_estimate(target_face)
+                    # 可以在这里更新距离显示UI
+                
+                # ===== 根据追踪模式处理 =====
+                if self.tracking_enabled:
+                    if self.tracking_mode == 'auto' and target_face:
+                        # 自动追踪模式：根据人脸位置控制舵机
+                        x_error, y_error = self.face_tracker.calculate_error(target_face)
+                        pan, tilt = self.servo_controller.update(x_error, y_error)
+                        
+                        # 发送舵机角度到Sylvie底座
+                        if 'sylvie_base' in self.orchestrator.flowers:
+                            self.orchestrator.flowers['sylvie_base'].send_servo_angles(pan, tilt)
+                        
+                        # 更新手动滑块显示
+                        self.servo_manual_pan = pan
+                        self.servo_manual_tilt = tilt
+                        self._update_servo_sliders(pan, tilt)
+                        
+                    elif self.tracking_mode == 'manual':
+                        # 手动模式：使用滑块值
+                        pan = self.servo_manual_pan
+                        tilt = self.servo_manual_tilt
+                        self.servo_controller.set_position(pan, tilt)
+                        
+                        # 发送舵机角度
+                        if 'sylvie_base' in self.orchestrator.flowers:
+                            self.orchestrator.flowers['sylvie_base'].send_servo_angles(pan, tilt)
+                
+                # ===== 情绪识别 =====
                 emotion_result = self.emotion_detector.analyze(frame)
                 if emotion_result:
                     frame = self.emotion_detector.draw_results(frame, emotion_result)
                     self._update_emotion_display(emotion_result)
                 
-                # 分析姿态
+                # ===== 姿态分析 =====
                 pose_result = self.pose_tracker.analyze(frame)
                 if pose_result:
                     frame = self.pose_tracker.draw_results(frame, pose_result)
                     self._update_pose_display(pose_result)
                 
-                # 组合特征向量
-                if emotion_result and pose_result:
+                # ===== 组合特征向量 =====
+                if emotion_result and pose_result and target_face:
                     feature_vector = self.emotion_detector.get_feature_vector(emotion_result)
                     feature_vector[9] = pose_result['openness']  # 姿态开放度
-                    feature_vector[10] = 1.0  # 距离（预留）
+                    feature_vector[10] = distance  # 距离估计
                     
                     self.current_feature_vector = feature_vector
                     
@@ -618,6 +704,40 @@ class DigitalBloomControlPanel:
         """更新状态文本框"""
         self.status_text.insert(tk.END, text)
         self.status_text.see(tk.END)
+    
+    def _update_servo_sliders(self, pan, tilt):
+        """更新舵机滑块显示（自动追踪时更新UI）"""
+        if hasattr(self, 'pan_slider'):
+            self.pan_slider.set(pan)
+        if hasattr(self, 'tilt_slider'):
+            self.tilt_slider.set(tilt)
+    
+    def _on_servo_change(self, event=None):
+        """舵机滑块变化回调"""
+        if hasattr(self, 'pan_slider') and hasattr(self, 'tilt_slider'):
+            self.servo_manual_pan = int(self.pan_slider.get())
+            self.servo_manual_tilt = int(self.tilt_slider.get())
+    
+    def _toggle_tracking_mode(self):
+        """切换追踪模式"""
+        if self.tracking_mode == 'manual':
+            self.tracking_mode = 'auto'
+            self.tracking_btn.config(text="🔄 自动追踪", bg=self.success_color)
+            self._update_status("切换到自动追踪模式")
+        else:
+            self.tracking_mode = 'manual'
+            self.tracking_btn.config(text="✋ 手动控制", bg=self.warning_color)
+            self._update_status("切换到手动控制模式")
+    
+    def _toggle_tracking(self):
+        """开关追踪"""
+        self.tracking_enabled = not self.tracking_enabled
+        if self.tracking_enabled:
+            self.tracking_switch_btn.config(text="⏹ 停止追踪", bg=self.accent_color)
+            self._update_status("追踪已启动")
+        else:
+            self.tracking_switch_btn.config(text="▶️ 开始追踪", bg=self.success_color)
+            self._update_status("追踪已停止")
     
     def on_closing(self):
         """关闭窗口时的处理"""
