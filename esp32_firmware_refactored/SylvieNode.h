@@ -45,6 +45,10 @@
 #define LED2_PIN_G    13
 #define LED2_PIN_B    14
 
+// PWM Configuration for L298N motors / L298N 电机 PWM 配置
+#define PWM_FREQ       1000  // 1 kHz PWM frequency / PWM 频率
+#define PWM_RESOLUTION 8     // 8-bit resolution (0-255) / 8 位分辨率
+
 // ============================================================
 // Auto-Mode Timing / 自动模式时间参数
 // ============================================================
@@ -76,13 +80,14 @@ public:
     // ============================================================
 
     /**
-     * Set motor direction.
-     * 设置电机方向。
+     * Set motor direction and speed (PWM).
+     * 设置电机方向和速度（PWM）。
      *
      * @param motor     Motor number (1 or 2) / 电机编号（1 或 2）
      * @param direction  1=forward, -1=reverse, 0=stop / 1=正转, -1=反转, 0=停止
+     * @param speed     PWM duty cycle 0-255 / PWM 占空比
      */
-    void setMotor(int motor, int direction);
+    void setMotor(int motor, int direction, int speed = 255);
 
     /**
      * Set LED color.

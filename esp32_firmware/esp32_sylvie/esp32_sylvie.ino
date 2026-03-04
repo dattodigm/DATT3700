@@ -19,6 +19,10 @@ const int L1_R = 2;  const int L1_G = 4;  const int L1_B = 5;
 const int M2_A = 18; const int M2_B = 19;
 const int L2_R = 12; const int L2_G = 13; const int L2_B = 14;
 
+// --- PWM Configuration for L298N motors / L298N 电机 PWM 配置 ---
+const int PWM_FREQ       = 1000;  // 1 kHz PWM frequency / PWM 频率
+const int PWM_RESOLUTION = 8;     // 8-bit resolution (0-255) / 8 位分辨率
+
 // --- Automatic mode control 自动模式控制 ---
 bool autoMode = true;
 unsigned long lastAutoUpdate = 0;
@@ -27,9 +31,15 @@ int autoState = 0;
 void setup() {
   Serial.begin(115200);
 
-  // Initialize all pins to output mode 初始化所有引脚为输出模式
-  int pins[] = {M1_A, M1_B, M2_A, M2_B, L1_R, L1_G, L1_B, L2_R, L2_G, L2_B};
-  for (int p : pins) pinMode(p, OUTPUT);
+  // Initialize motor pins with LEDC PWM / 用 LEDC PWM 初始化电机引脚
+  ledcAttach(M1_A, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M1_B, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M2_A, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M2_B, PWM_FREQ, PWM_RESOLUTION);
+
+  // Initialize LED pins to output mode / 初始化 LED 引脚为输出模式
+  int ledPins[] = {L1_R, L1_G, L1_B, L2_R, L2_G, L2_B};
+  for (int p : ledPins) pinMode(p, OUTPUT);
 
   // Create WiFi hotspot
   Serial.println("Creating WiFi hotspot 正在创建WiFi热点...");
@@ -45,8 +55,8 @@ void setup() {
 
   Serial.println("\n=== OSC  command list  ===");
   Serial.println("/auto [0/1] -  Switch auto/manual mode");
-  Serial.println("/motor1 [1/-1/0] - Control motor A (forward/reverse/stop)");
-  Serial.println("/motor2 [1/-1/0] - Control motor B 控制电机B");
+  Serial.println("/motor1 [dir] [speed] - Control motor A (dir:1/-1/0, speed:0-255)");
+  Serial.println("/motor2 [dir] [speed] - Control motor B (dir:1/-1/0, speed:0-255)");
   Serial.println("/led1 [r] [g] [b] - Set LED1 color (0-255)");
   Serial.println("/led2 [r] [g] [b] - Set LED2 color");
   Serial.println("/preset [1/2/3] - Preset scene 预设场景");
@@ -115,18 +125,20 @@ void routeAuto(OSCMessage &msg, int addrOffset) {
 void routeMotor1(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
     int dir = msg.getInt(0);
-    setMotor(1, dir);
-    Serial.print("Motor A: ");
-    Serial.println(dir);
+    int speed = 255;  // Default full speed / 默认全速
+    if (msg.isInt(1)) speed = msg.getInt(1);
+    setMotor(1, dir, speed);
+    Serial.printf("Motor A: dir=%d speed=%d\n", dir, speed);
   }
 }
 
 void routeMotor2(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
     int dir = msg.getInt(0);
-    setMotor(2, dir);
-    Serial.print("Motor B: ");
-    Serial.println(dir);
+    int speed = 255;  // Default full speed / 默认全速
+    if (msg.isInt(1)) speed = msg.getInt(1);
+    setMotor(2, dir, speed);
+    Serial.printf("Motor B: dir=%d speed=%d\n", dir, speed);
   }
 }
 
@@ -198,20 +210,23 @@ void runAutoMode() {
   }
 }
 
-// Control the motor 控制电机
-void setMotor(int motor, int direction) {
+// Control the motor with PWM speed / 用 PWM 调速控制电机
+// dir: 1=forward, -1=reverse, 0=stop
+// speed: 0-255 (PWM duty cycle / PWM 占空比)
+void setMotor(int motor, int dir, int speed) {
   int pinA = (motor == 1) ? M1_A : M2_A;
   int pinB = (motor == 1) ? M1_B : M2_B;
+  speed = constrain(speed, 0, 255);
 
-  if (direction > 0) { // FORWARD rotation 正转
-    digitalWrite(pinA, HIGH);
-    digitalWrite(pinB, LOW);
-  } else if (direction < 0) { // REVERSE 反转
-    digitalWrite(pinA, LOW);
-    digitalWrite(pinB, HIGH);
+  if (dir > 0) { // FORWARD rotation 正转
+    ledcWrite(pinA, speed);
+    ledcWrite(pinB, 0);
+  } else if (dir < 0) { // REVERSE 反转
+    ledcWrite(pinA, 0);
+    ledcWrite(pinB, speed);
   } else { // STOP 停止
-    digitalWrite(pinA, LOW);
-    digitalWrite(pinB, LOW);
+    ledcWrite(pinA, 0);
+    ledcWrite(pinB, 0);
   }
 }
 
@@ -232,15 +247,15 @@ void setPreset(int preset) {
     case 1: // Flower A blooms with YELLOW LED 花A开（黄灯）
       setLED(1, 255, 255, 0);
       setLED(2, 0, 0, 0);
-      setMotor(1, 1);
-      setMotor(2, -1);
+      setMotor(1, 1, 255);
+      setMotor(2, -1, 255);
       break;
 
     case 2: // Flower B blooms with CYAN LED 花B开（青灯）
       setLED(1, 0, 0, 0);
       setLED(2, 0, 255, 255);
-      setMotor(1, -1);
-      setMotor(2, 1);
+      setMotor(1, -1, 255);
+      setMotor(2, 1, 255);
       break;
 
     case 3: // STOP ALL
@@ -251,8 +266,8 @@ void setPreset(int preset) {
 
 // STOP ALL DEVICES
 void stopAll() {
-  setMotor(1, 0);
-  setMotor(2, 0);
+  setMotor(1, 0, 0);
+  setMotor(2, 0, 0);
   setLED(1, 0, 0, 0);
   setLED(2, 0, 0, 0);
 }
@@ -283,18 +298,20 @@ void processSerialCommand(String cmd) {
 
   } else if (cmdName == "motor1" || cmdName == "m1") {
     if (!autoMode) {
-      int dir = args.toInt(); // 应为 1, -1, 或 0
-      setMotor(1, dir);
-      Serial.printf("[Serial] Motor A set to: %d\n", dir);
+      int dir = 0, speed = 255;
+      sscanf(args.c_str(), "%d %d", &dir, &speed);
+      setMotor(1, dir, speed);
+      Serial.printf("[Serial] Motor A set to: dir=%d speed=%d\n", dir, speed);
     } else {
       Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
     }
 
   } else if (cmdName == "motor2" || cmdName == "m2") {
     if (!autoMode) {
-      int dir = args.toInt();
-      setMotor(2, dir);
-      Serial.printf("[Serial] Motor B set to: %d\n", dir);
+      int dir = 0, speed = 255;
+      sscanf(args.c_str(), "%d %d", &dir, &speed);
+      setMotor(2, dir, speed);
+      Serial.printf("[Serial] Motor B set to: dir=%d speed=%d\n", dir, speed);
     } else {
       Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
     }
@@ -344,13 +361,13 @@ void processSerialCommand(String cmd) {
 // 串口帮助信息
 void printSerialHelp() {
   Serial.println("\n=== Serial Debug Commands ===");
-  Serial.println("auto [0/1]     - Switch mode (0=Manual, 1=Auto)");
-  Serial.println("motor1/m1 [1/-1/0] - Control Motor A");
-  Serial.println("motor2/m2 [1/-1/0] - Control Motor B");
-  Serial.println("led1/l1 [R] [G] [B] - Set LED1 color (0-255)");
-  Serial.println("led2/l2 [R] [G] [B] - Set LED2 color");
-  Serial.println("preset [1/2/3] - Load preset scene");
-  Serial.println("stop/alloff    - Stop all motors and LEDs");
-  Serial.println("help/?         - Show this help");
+  Serial.println("auto [0/1]             - Switch mode (0=Manual, 1=Auto)");
+  Serial.println("motor1/m1 [dir] [speed] - Control Motor A (dir:1/-1/0, speed:0-255)");
+  Serial.println("motor2/m2 [dir] [speed] - Control Motor B (dir:1/-1/0, speed:0-255)");
+  Serial.println("led1/l1 [R] [G] [B]   - Set LED1 color (0-255)");
+  Serial.println("led2/l2 [R] [G] [B]   - Set LED2 color");
+  Serial.println("preset [1/2/3]         - Load preset scene");
+  Serial.println("stop/alloff            - Stop all motors and LEDs");
+  Serial.println("help/?                 - Show this help");
   Serial.println("=============================\n");
 }

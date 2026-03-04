@@ -29,15 +29,18 @@ SylvieNode::SylvieNode()
 // Verified pin mapping from esp32_sylvie.ino
 // ============================================================
 bool SylvieNode::begin() {
-    // Initialize all motor and LED pins to OUTPUT
-    // 初始化所有电机和 LED 引脚为输出模式
-    const int pins[] = {
-        MOTOR1_PIN_A, MOTOR1_PIN_B,
-        MOTOR2_PIN_A, MOTOR2_PIN_B,
+    // Initialize motor pins with LEDC PWM / 用 LEDC PWM 初始化电机引脚
+    ledcAttach(MOTOR1_PIN_A, PWM_FREQ, PWM_RESOLUTION);
+    ledcAttach(MOTOR1_PIN_B, PWM_FREQ, PWM_RESOLUTION);
+    ledcAttach(MOTOR2_PIN_A, PWM_FREQ, PWM_RESOLUTION);
+    ledcAttach(MOTOR2_PIN_B, PWM_FREQ, PWM_RESOLUTION);
+
+    // Initialize LED pins to OUTPUT / 初始化 LED 引脚为输出模式
+    const int ledPins[] = {
         LED1_PIN_R, LED1_PIN_G, LED1_PIN_B,
         LED2_PIN_R, LED2_PIN_G, LED2_PIN_B
     };
-    for (int p : pins) {
+    for (int p : ledPins) {
         pinMode(p, OUTPUT);
     }
 
@@ -52,13 +55,13 @@ bool SylvieNode::begin() {
 
     // Print available commands / 打印可用命令
     Serial.println("\n=== OSC Command List / OSC 命令列表 ===");
-    Serial.println("/auto [0/1]        - Switch auto/manual mode / 切换自动/手动模式");
-    Serial.println("/motor1 [1/-1/0]   - Control Motor A / 控制电机A");
-    Serial.println("/motor2 [1/-1/0]   - Control Motor B / 控制电机B");
-    Serial.println("/led1 [r] [g] [b]  - Set LED1 color (0-255) / 设置LED1颜色");
-    Serial.println("/led2 [r] [g] [b]  - Set LED2 color (0-255) / 设置LED2颜色");
-    Serial.println("/preset [1/2/3]    - Preset scene / 预设场景");
-    Serial.println("/stop              - Emergency stop / 紧急停止");
+    Serial.println("/auto [0/1]                - Switch auto/manual mode / 切换自动/手动模式");
+    Serial.println("/motor1 [dir] [speed]      - Control Motor A (dir:1/-1/0, speed:0-255)");
+    Serial.println("/motor2 [dir] [speed]      - Control Motor B (dir:1/-1/0, speed:0-255)");
+    Serial.println("/led1 [r] [g] [b]          - Set LED1 color (0-255) / 设置LED1颜色");
+    Serial.println("/led2 [r] [g] [b]          - Set LED2 color (0-255) / 设置LED2颜色");
+    Serial.println("/preset [1/2/3]            - Preset scene / 预设场景");
+    Serial.println("/stop                      - Emergency stop / 紧急停止");
     Serial.println("======================================\n");
 
     return true;
@@ -118,20 +121,24 @@ void SylvieNode::onOSCMessage(OSCMessage &msg, const char* address) {
             }
         }
     }
-    // --- /motor1 [1|-1|0] ---
+    // --- /motor1 [dir] [speed] ---
     else if (strcmp(address, "/motor1") == 0) {
         if (!_autoMode && msg.isInt(0)) {
             int dir = msg.getInt(0);
-            setMotor(1, dir);
-            Serial.printf("[SylvieNode] Motor A: %d\n", dir);
+            int speed = 255;
+            if (msg.isInt(1)) speed = msg.getInt(1);
+            setMotor(1, dir, speed);
+            Serial.printf("[SylvieNode] Motor A: dir=%d speed=%d\n", dir, speed);
         }
     }
-    // --- /motor2 [1|-1|0] ---
+    // --- /motor2 [dir] [speed] ---
     else if (strcmp(address, "/motor2") == 0) {
         if (!_autoMode && msg.isInt(0)) {
             int dir = msg.getInt(0);
-            setMotor(2, dir);
-            Serial.printf("[SylvieNode] Motor B: %d\n", dir);
+            int speed = 255;
+            if (msg.isInt(1)) speed = msg.getInt(1);
+            setMotor(2, dir, speed);
+            Serial.printf("[SylvieNode] Motor B: dir=%d speed=%d\n", dir, speed);
         }
     }
     // --- /led1 [r] [g] [b] ---
@@ -180,22 +187,23 @@ void SylvieNode::stopAll() {
 }
 
 // ============================================================
-// setMotor() - Motor direction control / 电机方向控制
-// Verified logic from esp32_sylvie.ino
+// setMotor() - Motor PWM speed control / 电机 PWM 调速控制
+// Uses ledcWrite for L298N H-bridge PWM
 // ============================================================
-void SylvieNode::setMotor(int motor, int direction) {
+void SylvieNode::setMotor(int motor, int direction, int speed) {
     int pinA = (motor == 1) ? MOTOR1_PIN_A : MOTOR2_PIN_A;
     int pinB = (motor == 1) ? MOTOR1_PIN_B : MOTOR2_PIN_B;
+    speed = constrain(speed, 0, 255);
 
     if (direction > 0) {        // FORWARD / 正转
-        digitalWrite(pinA, HIGH);
-        digitalWrite(pinB, LOW);
+        ledcWrite(pinA, speed);
+        ledcWrite(pinB, 0);
     } else if (direction < 0) { // REVERSE / 反转
-        digitalWrite(pinA, LOW);
-        digitalWrite(pinB, HIGH);
+        ledcWrite(pinA, 0);
+        ledcWrite(pinB, speed);
     } else {                    // STOP / 停止
-        digitalWrite(pinA, LOW);
-        digitalWrite(pinB, LOW);
+        ledcWrite(pinA, 0);
+        ledcWrite(pinB, 0);
     }
 }
 
@@ -321,18 +329,20 @@ void SylvieNode::processSerialCommand(const char* cmd) {
     }
     else if (strcmp(cmdBuf, "motor1") == 0 || strcmp(cmdBuf, "m1") == 0) {
         if (!_autoMode) {
-            int dir = atoi(args);
-            setMotor(1, dir);
-            Serial.printf("[Serial] Motor A set to: %d\n", dir);
+            int dir = 0, speed = 255;
+            sscanf(args, "%d %d", &dir, &speed);
+            setMotor(1, dir, speed);
+            Serial.printf("[Serial] Motor A set to: dir=%d speed=%d\n", dir, speed);
         } else {
             Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
         }
     }
     else if (strcmp(cmdBuf, "motor2") == 0 || strcmp(cmdBuf, "m2") == 0) {
         if (!_autoMode) {
-            int dir = atoi(args);
-            setMotor(2, dir);
-            Serial.printf("[Serial] Motor B set to: %d\n", dir);
+            int dir = 0, speed = 255;
+            sscanf(args, "%d %d", &dir, &speed);
+            setMotor(2, dir, speed);
+            Serial.printf("[Serial] Motor B set to: dir=%d speed=%d\n", dir, speed);
         } else {
             Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
         }
@@ -383,13 +393,13 @@ void SylvieNode::processSerialCommand(const char* cmd) {
 // ============================================================
 void SylvieNode::printSerialHelp() {
     Serial.println("\n=== Serial Debug Commands / 串口调试命令 ===");
-    Serial.println("auto [0/1]         - Switch mode (0=Manual, 1=Auto)");
-    Serial.println("motor1/m1 [1/-1/0] - Control Motor A");
-    Serial.println("motor2/m2 [1/-1/0] - Control Motor B");
-    Serial.println("led1/l1 [R] [G] [B] - Set LED1 color (0-255)");
-    Serial.println("led2/l2 [R] [G] [B] - Set LED2 color");
-    Serial.println("preset [1/2/3]     - Load preset scene");
-    Serial.println("stop/alloff        - Stop all motors and LEDs");
-    Serial.println("help/?             - Show this help");
+    Serial.println("auto [0/1]                 - Switch mode (0=Manual, 1=Auto)");
+    Serial.println("motor1/m1 [dir] [speed]    - Control Motor A (dir:1/-1/0, speed:0-255)");
+    Serial.println("motor2/m2 [dir] [speed]    - Control Motor B (dir:1/-1/0, speed:0-255)");
+    Serial.println("led1/l1 [R] [G] [B]       - Set LED1 color (0-255)");
+    Serial.println("led2/l2 [R] [G] [B]       - Set LED2 color");
+    Serial.println("preset [1/2/3]             - Load preset scene");
+    Serial.println("stop/alloff                - Stop all motors and LEDs");
+    Serial.println("help/?                     - Show this help");
     Serial.println("=============================================\n");
 }
