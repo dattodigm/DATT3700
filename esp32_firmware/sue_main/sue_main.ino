@@ -55,6 +55,8 @@ const char* ap_ssid     = "ESP32_Sue";
 const char* ap_password = "12345678";
 
 // STA mode settings / 客户端模式设置
+// ⚠️ Change these to your actual WiFi credentials before flashing!
+// ⚠️ 烧录前请修改为你实际的 WiFi 账号密码！
 const char* sta_ssid     = "YOUR_ROUTER_SSID";
 const char* sta_password = "YOUR_ROUTER_PASSWORD";
 
@@ -127,10 +129,11 @@ void setup() {
   Serial.println("========================================\n");
 
   // --- Initialize hardware / 初始化硬件 ---
-  pinMode(RED_LED, OUTPUT);
-  pinMode(GREEN_LED, OUTPUT);
-  digitalWrite(RED_LED, LOW);
-  digitalWrite(GREEN_LED, LOW);
+  // Configure LED pins with LEDC PWM for brightness control / 用 LEDC PWM 配置 LED 引脚
+  ledcAttach(RED_LED, 1000, 8);
+  ledcAttach(GREEN_LED, 1000, 8);
+  ledcWrite(RED_LED, 0);
+  ledcWrite(GREEN_LED, 0);
 
   petalServo.setPeriodHertz(50);
   petalServo.attach(SERVO_PIN, 500, 2400);
@@ -292,8 +295,8 @@ void processOSC() {
     if (msg.isInt(0) && msg.isInt(1)) {
       int r = msg.getInt(0);
       int g = msg.getInt(1);
-      analogWrite(RED_LED, constrain(r, 0, 255));
-      analogWrite(GREEN_LED, constrain(g, 0, 255));
+      ledcWrite(RED_LED, constrain(r, 0, 255));
+      ledcWrite(GREEN_LED, constrain(g, 0, 255));
       Serial.printf("[OSC] LED: R=%d G=%d\n", r, g);
     }
   }
@@ -329,41 +332,41 @@ void applyState(const char* state) {
 
   if (strcmp(state, "danger") == 0) {
     // Danger: red LED + close flower / 危险：红灯 + 闭合花朵
-    digitalWrite(RED_LED, HIGH);
-    digitalWrite(GREEN_LED, LOW);
+    ledcWrite(RED_LED, 255);
+    ledcWrite(GREEN_LED, 0);
     startClosing();
   }
   else if (strcmp(state, "relax") == 0) {
     // Relax: green LED + open flower / 放松：绿灯 + 开放花朵
-    digitalWrite(RED_LED, LOW);
-    digitalWrite(GREEN_LED, HIGH);
+    ledcWrite(RED_LED, 0);
+    ledcWrite(GREEN_LED, 255);
     startOpening();
   }
   else if (strcmp(state, "idle") == 0) {
     // Idle: all off, close flower / 待机：全灭，闭合花朵
-    digitalWrite(RED_LED, LOW);
-    digitalWrite(GREEN_LED, LOW);
+    ledcWrite(RED_LED, 0);
+    ledcWrite(GREEN_LED, 0);
     startClosing();
   }
   else if (strcmp(state, "alert") == 0) {
     // Alert: both LEDs on, half-open / 警戒：双灯亮，半开
-    digitalWrite(RED_LED, HIGH);
-    digitalWrite(GREEN_LED, HIGH);
+    ledcWrite(RED_LED, 255);
+    ledcWrite(GREEN_LED, 255);
     setTargetAngle((CLOSED_ANGLE + OPEN_ANGLE) / 2);
     currentState = STATE_OPENING;
     stateEntryMs = millis();
   }
   else if (strcmp(state, "calm") == 0) {
     // Calm: green LED, slow open / 平静：绿灯，慢开
-    digitalWrite(RED_LED, LOW);
-    digitalWrite(GREEN_LED, HIGH);
+    ledcWrite(RED_LED, 0);
+    ledcWrite(GREEN_LED, 255);
     stepIntervalMs = 40;  // Slower / 更慢
     startOpening();
   }
   else if (strcmp(state, "breathe") == 0) {
     // Breathe: open then auto-close after 3s / 呼吸：开后 3 秒自动闭合
-    digitalWrite(RED_LED, LOW);
-    digitalWrite(GREEN_LED, HIGH);
+    ledcWrite(RED_LED, 0);
+    ledcWrite(GREEN_LED, 255);
     startOpening();
     autoCloseMs = 3000;
   }
@@ -449,8 +452,8 @@ void updateFSM() {
 void emergencyStop() {
   currentState = STATE_IDLE;
   targetAngle = currentAngle;  // Stop where we are / 原地停止
-  digitalWrite(RED_LED, LOW);
-  digitalWrite(GREEN_LED, LOW);
+  ledcWrite(RED_LED, 0);
+  ledcWrite(GREEN_LED, 0);
   autoCloseMs = 0;
   Serial.println("[Sue] Emergency stop!");
 }
@@ -515,8 +518,8 @@ void processSerial() {
   else if (strcmp(cmdBuf, "led") == 0) {
     int r = 0, g = 0;
     sscanf(args, "%d %d", &r, &g);
-    analogWrite(RED_LED, constrain(r, 0, 255));
-    analogWrite(GREEN_LED, constrain(g, 0, 255));
+    ledcWrite(RED_LED, constrain(r, 0, 255));
+    ledcWrite(GREEN_LED, constrain(g, 0, 255));
     Serial.printf("[Serial] LED: R=%d G=%d\n", r, g);
   }
   else if (strcmp(cmdBuf, "status") == 0) {

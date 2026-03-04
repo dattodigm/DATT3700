@@ -299,9 +299,13 @@ void processSerialCommand(String cmd) {
   } else if (cmdName == "motor1" || cmdName == "m1") {
     if (!autoMode) {
       int dir = 0, speed = 255;
-      sscanf(args.c_str(), "%d %d", &dir, &speed);
-      setMotor(1, dir, speed);
-      Serial.printf("[Serial] Motor A set to: dir=%d speed=%d\n", dir, speed);
+      int parsed = sscanf(args.c_str(), "%d %d", &dir, &speed);
+      if (parsed >= 1) {
+        setMotor(1, dir, speed);
+        Serial.printf("[Serial] Motor A set to: dir=%d speed=%d\n", dir, speed);
+      } else {
+        Serial.println("[Serial] Usage: motor1 [dir] [speed]");
+      }
     } else {
       Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
     }
@@ -309,9 +313,13 @@ void processSerialCommand(String cmd) {
   } else if (cmdName == "motor2" || cmdName == "m2") {
     if (!autoMode) {
       int dir = 0, speed = 255;
-      sscanf(args.c_str(), "%d %d", &dir, &speed);
-      setMotor(2, dir, speed);
-      Serial.printf("[Serial] Motor B set to: dir=%d speed=%d\n", dir, speed);
+      int parsed = sscanf(args.c_str(), "%d %d", &dir, &speed);
+      if (parsed >= 1) {
+        setMotor(2, dir, speed);
+        Serial.printf("[Serial] Motor B set to: dir=%d speed=%d\n", dir, speed);
+      } else {
+        Serial.println("[Serial] Usage: motor2 [dir] [speed]");
+      }
     } else {
       Serial.println("[Serial] Ignored. Switch to MANUAL mode first.");
     }
