@@ -99,14 +99,14 @@ Arduino uses a **folder-based** project structure:
 eps32_sylvie/                    ← Project folder name
 ├── esp32_sylvie.ino             ← Main sketch (must match folder name)
 ├── config.h                     ← Configuration (edit this!)
-├── NetworkManager.h             ← Network module header
-└── NetworkManager.cpp           ← Network module implementation
+├── MeshManager.h             ← Network module header
+└── MeshManager.cpp           ← Network module implementation
 ```
 
 ### How It Works
 
-1. `esp32_sylvie.ino` includes `config.h` and `NetworkManager.h` via `#include`
-2. Arduino IDE automatically compiles `NetworkManager.cpp` because it's in the same folder
+1. `esp32_sylvie.ino` includes `config.h` and `MeshManager.h` via `#include`
+2. Arduino IDE automatically compiles `MeshManager.cpp` because it's in the same folder
 3. `config.h` defines all configurable values (WiFi name, password, mode, etc.)
 
 ---
@@ -129,8 +129,8 @@ eps32_sylvie/                    ← Project folder name
 |---|---|---|
 | `esp32_sylvie.ino` | Main program with `setup()` and `loop()` | Only for motor/LED logic |
 | `config.h` | All configuration settings | **Yes** — set your WiFi, node type, etc. |
-| `NetworkManager.h` | Network class declaration | No (unless adding features) |
-| `NetworkManager.cpp` | Network class implementation | No (unless adding features) |
+| `MeshManager.h` | Network class declaration | No (unless adding features) |
+| `MeshManager.cpp` | Network class implementation | No (unless adding features) |
 
 ---
 
@@ -204,11 +204,11 @@ Before uploading, edit `config.h` to match your setup:
 4. You should see output like:
 
 ```
-[NetworkManager] Starting AP mode... / 正在启动热点模式...
-[NetworkManager] AP started. SSID: ESP32_Sylvie
-[NetworkManager] AP IP address / 热点 IP 地址: 192.168.4.1
-[NetworkManager] mDNS started: sylvie_1.local
-[NetworkManager] Web server started on port 80
+[MeshManager] Starting AP mode... / 正在启动热点模式...
+[MeshManager] AP started. SSID: ESP32_Sylvie
+[MeshManager] AP IP address / 热点 IP 地址: 192.168.4.1
+[MeshManager] mDNS started: sylvie_1.local
+[MeshManager] Web server started on port 80
 ```
 
 ### Testing the Network

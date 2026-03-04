@@ -99,14 +99,14 @@ Arduino 使用 **基于文件夹** 的项目结构：
 eps32_sylvie/                    ← 项目文件夹名
 ├── esp32_sylvie.ino             ← 主程序（必须与文件夹同名）
 ├── config.h                     ← 配置文件（编辑这个！）
-├── NetworkManager.h             ← 网络模块头文件
-└── NetworkManager.cpp           ← 网络模块实现文件
+├── MeshManager.h             ← 网络模块头文件
+└── MeshManager.cpp           ← 网络模块实现文件
 ```
 
 ### 工作原理
 
-1. `esp32_sylvie.ino` 通过 `#include` 引入 `config.h` 和 `NetworkManager.h`
-2. Arduino IDE 会自动编译同一文件夹中的 `NetworkManager.cpp`
+1. `esp32_sylvie.ino` 通过 `#include` 引入 `config.h` 和 `MeshManager.h`
+2. Arduino IDE 会自动编译同一文件夹中的 `MeshManager.cpp`
 3. `config.h` 定义了所有可配置的值（WiFi 名称、密码、模式等）
 
 ---
@@ -129,8 +129,8 @@ eps32_sylvie/                    ← 项目文件夹名
 |---|---|---|
 | `esp32_sylvie.ino` | 主程序，包含 `setup()` 和 `loop()` | 仅修改电机/LED 逻辑时需要 |
 | `config.h` | 所有配置设置 | **需要** — 设置你的 WiFi、节点类型等 |
-| `NetworkManager.h` | 网络类声明 | 不需要（除非添加功能） |
-| `NetworkManager.cpp` | 网络类实现 | 不需要（除非添加功能） |
+| `MeshManager.h` | 网络类声明 | 不需要（除非添加功能） |
+| `MeshManager.cpp` | 网络类实现 | 不需要（除非添加功能） |
 
 ---
 
@@ -204,11 +204,11 @@ eps32_sylvie/                    ← 项目文件夹名
 4. 你应该看到如下输出：
 
 ```
-[NetworkManager] Starting AP mode... / 正在启动热点模式...
-[NetworkManager] AP started. SSID: ESP32_Sylvie
-[NetworkManager] AP IP address / 热点 IP 地址: 192.168.4.1
-[NetworkManager] mDNS started: sylvie_1.local
-[NetworkManager] Web server started on port 80
+[MeshManager] Starting AP mode... / 正在启动热点模式...
+[MeshManager] AP started. SSID: ESP32_Sylvie
+[MeshManager] AP IP address / 热点 IP 地址: 192.168.4.1
+[MeshManager] mDNS started: sylvie_1.local
+[MeshManager] Web server started on port 80
 ```
 
 ### 测试网络功能

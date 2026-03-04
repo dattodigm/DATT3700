@@ -2,16 +2,16 @@
  * sylvie_main.ino - Sylvie Cluster Flower Main Sketch
  *                   Sylvie 集群花朵主程序
  *
- * Integrates NetworkManager + FlowerNode + SylvieNode into a clean
+ * Integrates MeshManager + FlowerNode + SylvieNode into a clean
  * Arduino entry point. This replaces the original monolithic
  * esp32_sylvie.ino with an object-oriented architecture.
  *
- * 将 NetworkManager + FlowerNode + SylvieNode 集成为简洁的
+ * 将 MeshManager + FlowerNode + SylvieNode 集成为简洁的
  * Arduino 入口。以面向对象架构替代原始的单文件 esp32_sylvie.ino。
  *
  * Architecture / 架构:
  *   config.h          → All configurable parameters / 所有可配置参数
- *   NetworkManager    → WiFi AP/STA + mDNS + HTTP / WiFi 网络管理
+ *   MeshManager       → WiFi AP/STA + mDNS + HTTP / WiFi 网络管理
  *   FlowerNode        → Abstract base class / 抽象基类
  *   SylvieNode        → Concrete hardware driver / 具体硬件驱动
  *
@@ -22,14 +22,14 @@
  */
 
 #include "config.h"
-#include "NetworkManager.h"
+#include "MeshManager.h"
 #include "SylvieNode.h"
 
 // ============================================================
 // Global Instances / 全局实例
 // ============================================================
 
-DattNetworkManager network;   // WiFi + mDNS + Web Server / WiFi 网络管理器
+MeshManager    network;   // WiFi + mDNS + Web Server / WiFi 网络管理器
 SylvieNode     sylvie;    // Flower hardware driver / 花朵硬件驱动
 
 // ============================================================
