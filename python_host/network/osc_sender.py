@@ -5,8 +5,65 @@ Wraps python-osc with a queue-based approach so vision/UI threads
 never block on network I/O.
 """
 
+import socket
+import struct
 import threading
+import time
+from collections import deque
+
 from pythonosc import udp_client
+
+
+def _pad4(data: bytes) -> bytes:
+    pad = (4 - (len(data) % 4)) % 4
+    return data + (b"\x00" * pad)
+
+
+def _build_osc_message(address, args=None):
+    args = list(args or [])
+    address_bin = _pad4(address.encode("utf-8") + b"\x00")
+
+    type_tags = [","]
+    payload = b""
+    for arg in args:
+        if isinstance(arg, int):
+            type_tags.append("i")
+            payload += struct.pack(">i", int(arg))
+        else:
+            type_tags.append("s")
+            payload += _pad4(str(arg).encode("utf-8") + b"\x00")
+
+    tag_bin = _pad4("".join(type_tags).encode("utf-8") + b"\x00")
+    return address_bin + tag_bin + payload
+
+
+def _read_osc_string(data, offset):
+    end = data.find(b"\x00", offset)
+    if end < 0:
+        return "", len(data)
+    value = data[offset:end].decode("utf-8", errors="ignore")
+    next_offset = (end + 4) & ~0x03
+    return value, next_offset
+
+
+def _parse_osc_message(data):
+    address, offset = _read_osc_string(data, 0)
+    type_tags, offset = _read_osc_string(data, offset)
+
+    args = []
+    for tag in type_tags[1:]:  # skip leading comma
+        if tag == "i":
+            if offset + 4 > len(data):
+                break
+            args.append(struct.unpack(">i", data[offset:offset + 4])[0])
+            offset += 4
+        elif tag == "s":
+            value, offset = _read_osc_string(data, offset)
+            args.append(value)
+        else:
+            break
+
+    return address, args
 
 
 class OSCSender:
@@ -17,6 +74,7 @@ class OSCSender:
         self._target_info = {}   # name -> (ip, port)
         self._lock = threading.Lock()
         self._override = False   # True = manual UI only, block CV auto
+        self._history = deque(maxlen=200)
 
     # ------------------------------------------------------------------
     # Target management
@@ -48,6 +106,22 @@ class OSCSender:
     def override(self, value):
         self._override = bool(value)
 
+    def _push_history(self, direction, address, args, target_name=None, ip=None, port=None):
+        self._history.append(
+            {
+                "ts": time.time(),
+                "direction": direction,
+                "target": target_name,
+                "ip": ip,
+                "port": port,
+                "address": address,
+                "args": list(args or []),
+            }
+        )
+
+    def get_history(self, limit=80):
+        return list(self._history)[-int(limit):]
+
     # ------------------------------------------------------------------
     # Send helpers
     # ------------------------------------------------------------------
@@ -59,13 +133,20 @@ class OSCSender:
         source="manual" → always sent
         """
         if source == "auto" and self._override:
-            return  # manual override active, ignore CV commands
+            return False  # manual override active, ignore CV commands
 
         with self._lock:
             client = self._clients.get(target_name)
+            target = self._target_info.get(target_name)
         if client is None:
-            return
+            return False
         client.send_message(address, list(args))
+        ip, port = target if target else (None, None)
+        self._push_history("tx", address, args, target_name=target_name, ip=ip, port=port)
+        return True
+
+    def send_raw(self, target_name, address, args=None, source="manual"):
+        return self.send(target_name, address, *(args or []), source=source)
 
     def send_motor(self, target_name, motor_id, direction, speed=255, source="auto"):
         addr = f"/motor{motor_id}"
@@ -92,3 +173,69 @@ class OSCSender:
     def send_eye_animation(self, target_name, animation_id, **kwargs):
         """Reserved — will send TFT IPS eye animation commands."""
         pass
+
+    # ------------------------------------------------------------------
+    # Lightweight request/reply helpers for discovery endpoints
+    # ------------------------------------------------------------------
+
+    def _request_reply(self, ip, port, address, args=None, timeout=0.8):
+        packet = _build_osc_message(address, args=args)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(timeout)
+            sock.bind(("0.0.0.0", 0))
+            sock.sendto(packet, (ip, int(port)))
+            self._push_history("tx", address, args or [], ip=ip, port=port)
+            data, src = sock.recvfrom(2048)
+            reply_addr, reply_args = _parse_osc_message(data)
+            self._push_history("rx", reply_addr, reply_args, ip=src[0], port=src[1])
+            return {"address": reply_addr, "args": reply_args, "ip": src[0], "port": src[1]}
+        except OSError:
+            return None
+        finally:
+            sock.close()
+
+    def query_info_self_ip(self, ip, port=8888, timeout=0.8):
+        reply = self._request_reply(ip, port, "/info/self", timeout=timeout)
+        if not reply or reply.get("address") != "/info/self":
+            return None
+        args = reply.get("args", [])
+        if len(args) < 4:
+            return None
+        return {
+            "name": str(args[0]),
+            "mac": str(args[1]),
+            "mode": str(args[2]),
+            "ip": str(args[3]),
+        }
+
+    def query_info_clients_ip(self, ip, port=8888, timeout=0.8):
+        reply = self._request_reply(ip, port, "/info/clients", timeout=timeout)
+        if not reply or reply.get("address") != "/info/clients":
+            return None
+
+        args = reply.get("args", [])
+        count = int(args[0]) if args and isinstance(args[0], int) else 0
+        clients = []
+        idx = 1
+        while idx + 1 < len(args):
+            clients.append({"mac": str(args[idx]), "ip": str(args[idx + 1])})
+            idx += 2
+
+        return {"count": count, "clients": clients}
+
+    def query_info_self(self, target_name, timeout=0.8):
+        with self._lock:
+            target = self._target_info.get(target_name)
+        if not target:
+            return None
+        ip, port = target
+        return self.query_info_self_ip(ip, port, timeout=timeout)
+
+    def query_info_clients(self, target_name, timeout=0.8):
+        with self._lock:
+            target = self._target_info.get(target_name)
+        if not target:
+            return None
+        ip, port = target
+        return self.query_info_clients_ip(ip, port, timeout=timeout)

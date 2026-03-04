@@ -11,7 +11,7 @@ Usage:
 import argparse
 
 from python_host.vision.face_tracker import FaceTracker
-from python_host.ui.app import app, osc
+from python_host.ui.app import app
 
 
 def main():
@@ -22,19 +22,30 @@ def main():
     parser.add_argument("--port", type=int, default=15000, help="Flask port")
     args = parser.parse_args()
 
-    # Configure OSC target
-    osc.add_target("sylvie_1", args.esp, 8888)
+    import python_host.ui.app as app_module
+
+    # Configure default OSC target in the shared device registry.
+    app_module._register_device(
+        {
+            "name": "sylvie_1",
+            "ip": args.esp,
+            "port": 8888,
+            "node_type": "sylvie",
+            "source": "startup",
+            "metadata": {},
+        }
+    )
+    app_module._selected_device = "sylvie_1"
 
     # Start camera if enabled
     if not args.no_camera:
-        import python_host.ui.app as app_module
         app_module.tracker = FaceTracker(camera_index=args.camera)
         try:
             app_module.tracker.start()
         except RuntimeError as e:
-            print(f"⚠️ Camera not available: {e}")
+            print(f"Camera not available: {e}")
 
-    print(f"🌸 Starting DATT3700 control panel on http://0.0.0.0:{args.port}")
+    print(f"Starting DATT3700 control panel on http://0.0.0.0:{args.port}")
     app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
 
 

@@ -1,6 +1,9 @@
 """Tests for the Flask control panel API endpoints."""
 import json
+
 import pytest
+
+import python_host.ui.app as app_module
 from python_host.ui.app import app
 
 
@@ -66,8 +69,8 @@ class TestFlaskAPI:
 
     def test_api_tag_save(self, client, tmp_path):
         """Test tag & save creates JSONL entry."""
-        import python_host.ui.app as app_module
         original_dir = app_module.DATA_DIR
+        original_samples = app_module.SAMPLES_FILE
         app_module.DATA_DIR = str(tmp_path)
         app_module.SAMPLES_FILE = str(tmp_path / "test_samples.jsonl")
 
@@ -86,6 +89,7 @@ class TestFlaskAPI:
 
         # Restore
         app_module.DATA_DIR = original_dir
+        app_module.SAMPLES_FILE = original_samples
 
     def test_api_perception_status(self, client):
         resp = client.get("/api/perception/status")
@@ -103,3 +107,69 @@ class TestFlaskAPI:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert data["status"] == "stub_ok"
+
+    def test_api_registry_and_devices(self, client):
+        reg = client.get("/api/devices/registry")
+        assert reg.status_code == 200
+        reg_data = json.loads(reg.data)
+        assert "node_types" in reg_data
+
+        devices = client.get("/api/devices")
+        assert devices.status_code == 200
+        data = json.loads(devices.data)
+        assert "devices" in data
+
+    def test_api_scan_mdns_with_mock(self, client, monkeypatch):
+        monkeypatch.setattr(
+            app_module,
+            "discover_mdns_nodes",
+            lambda timeout_sec, registry: [
+                {
+                    "name": "F7OWER_00",
+                    "ip": "192.168.4.1",
+                    "port": 8888,
+                    "node_type": "sylvie",
+                    "source": "mdns",
+                    "metadata": {},
+                }
+            ],
+        )
+        monkeypatch.setattr(app_module, "discover_nodes_via_gateway", lambda **kwargs: [])
+
+        resp = client.post(
+            "/api/devices/scan",
+            data=json.dumps({"mode": "mdns"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        payload = json.loads(resp.data)
+        assert payload["count"] >= 1
+        assert any(d["name"] == "F7OWER_00" for d in payload["devices"])
+
+    def test_api_select_and_raw(self, client):
+        client.post(
+            "/api/osc/target",
+            data=json.dumps({"name": "raw_test", "ip": "127.0.0.1", "port": 8888}),
+            content_type="application/json",
+        )
+        sel = client.post(
+            "/api/devices/select",
+            data=json.dumps({"name": "raw_test"}),
+            content_type="application/json",
+        )
+        assert sel.status_code == 200
+
+        raw = client.post(
+            "/api/osc/raw",
+            data=json.dumps({"address": "/state", "args": ["relax"]}),
+            content_type="application/json",
+        )
+        assert raw.status_code == 200
+        raw_data = json.loads(raw.data)
+        assert raw_data["target"] == "raw_test"
+
+        history = client.get("/api/osc/history")
+        assert history.status_code == 200
+        hist_data = json.loads(history.data)
+        assert "items" in hist_data
+
