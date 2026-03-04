@@ -69,4 +69,8 @@
 // ============================================================
 #define WEB_SERVER_PORT 80
 
+// Delay before starting web server after AP init (ms)
+// AP 初始化后启动 Web 服务器前的延迟（毫秒）
+#define WEB_SERVER_DEFER_MS 1000
+
 #endif // CONFIG_H

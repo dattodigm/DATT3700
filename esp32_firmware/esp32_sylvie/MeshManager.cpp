@@ -68,7 +68,7 @@ void MeshManager::update() {
     // Deferred web server start (AP mode only)
     // 延迟启动 Web 服务器（仅 AP 模式）
     if (_webServerPending && !_serverStarted) {
-        if (millis() - _webServerDeferMs >= 1000) {
+        if (millis() - _webServerDeferMs >= WEB_SERVER_DEFER_MS) {
             setupWebServer();
             _webServerPending = false;
         }
