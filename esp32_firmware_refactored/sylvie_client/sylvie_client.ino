@@ -27,7 +27,7 @@ const char* MDNS_NAME = "F7OWER_01";
 const int OSC_PORT = 8888;
 
 // --- 热点客户端扫描间隔（毫秒）---
-const unsigned long CLIENT_SCAN_INTERVAL = 5000;
+// const unsigned long CLIENT_SCAN_INTERVAL = 5000;
 
 // --- 引脚定义 ---
 const int M1_A = 25, M1_B = 26;
@@ -52,7 +52,7 @@ ClientInfo clients[MAX_CLIENTS];
 WiFiUDP udp;
 bool autoMode = true;
 unsigned long lastAutoUpdate = 0;
-unsigned long lastClientScan = 0;
+// unsigned long lastClientScan = 0;
 int autoState = 0;
 
 // ── 前向声明 ────────────────────────────────────────────────
@@ -76,7 +76,7 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   switch (event) {
 
     case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-      Serial.printf("\n🔌 客户端已连接  MAC: %02X:%02X:%02X:%02X:%02X:%02X（等待DHCP分配IP...）\n",
+      Serial.printf("\n🔌 客户端已连接  MAC: %02X:%02X:%02X:%02X:%02X:%02X（等待 DHCP 分配 IP...）\n",
         info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
         info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
         info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
@@ -87,7 +87,7 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
         ip_event_ap_staipassigned_t* event_data = (ip_event_ap_staipassigned_t*)&info.wifi_ap_staipassigned;
         uint32_t ip = event_data->ip.addr;
         uint8_t* mac = event_data->mac;
-        Serial.printf("✅ IP已分配  MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
+        Serial.printf("✅ IP 已分配  MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
           ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
         for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -98,6 +98,7 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             break;
           }
         }
+        printConnectedClients();
       }
       break;
 
@@ -112,6 +113,7 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             break;
           }
         }
+        printConnectedClients();
       }
       break;
 
@@ -244,10 +246,10 @@ void loop() {
 
   if (autoMode) runAutoMode();
 
-  if (millis() - lastClientScan > CLIENT_SCAN_INTERVAL) {
-    lastClientScan = millis();
-    printConnectedClients();
-  }
+//   if (millis() - lastClientScan > CLIENT_SCAN_INTERVAL) {
+//     lastClientScan = millis();
+//     printConnectedClients();
+//   }
 }
 
 // ============================================================
