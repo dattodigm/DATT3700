@@ -1,5 +1,5 @@
 /**
- * sylvie_main.ino - Sylvie Cluster Flower Main Sketch
+ * sylvie_v2.ino - Sylvie Cluster Flower Main Sketch
  *                   Sylvie 集群花朵主程序
  *
  * Integrates MeshManager + FlowerNode + SylvieNode into a clean
