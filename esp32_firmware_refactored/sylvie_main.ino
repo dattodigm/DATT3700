@@ -29,7 +29,7 @@
 // Global Instances / 全局实例
 // ============================================================
 
-NetworkManager network;   // WiFi + mDNS + Web Server / WiFi 网络管理器
+DattNetworkManager network;   // WiFi + mDNS + Web Server / WiFi 网络管理器
 SylvieNode     sylvie;    // Flower hardware driver / 花朵硬件驱动
 
 // ============================================================

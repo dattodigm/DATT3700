@@ -13,7 +13,7 @@
 // ============================================================
 // Constructor / 构造函数
 // ============================================================
-NetworkManager::NetworkManager()
+DattNetworkManager::DattNetworkManager()
     : _server(WEB_SERVER_PORT)
     , _connected(false)
     , _mdnsStarted(false)
@@ -28,7 +28,7 @@ NetworkManager::NetworkManager()
 // ============================================================
 // begin() - Initialize network / 初始化网络
 // ============================================================
-bool NetworkManager::begin() {
+bool DattNetworkManager::begin() {
     bool success = false;
 
     if (_mode == NETWORK_MODE_AP) {
@@ -60,7 +60,7 @@ bool NetworkManager::begin() {
 // ============================================================
 // update() - Non-blocking periodic tasks / 非阻塞周期性任务
 // ============================================================
-void NetworkManager::update() {
+void DattNetworkManager::update() {
     // STA mode: non-blocking connection monitoring / STA 模式：非阻塞连接监控
     if (_mode == NETWORK_MODE_STA) {
         unsigned long now = millis();
@@ -116,7 +116,7 @@ void NetworkManager::update() {
 // ============================================================
 // isConnected() / 检查连接状态
 // ============================================================
-bool NetworkManager::isConnected() const {
+bool DattNetworkManager::isConnected() const {
     if (_mode == NETWORK_MODE_AP) {
         return _connected;  // AP is always "connected" once started / AP 启动后始终为"已连接"
     }
@@ -126,7 +126,7 @@ bool NetworkManager::isConnected() const {
 // ============================================================
 // getIP() / 获取 IP 地址
 // ============================================================
-IPAddress NetworkManager::getIP() const {
+IPAddress DattNetworkManager::getIP() const {
     if (_mode == NETWORK_MODE_AP) {
         return WiFi.softAPIP();
     }
@@ -136,7 +136,7 @@ IPAddress NetworkManager::getIP() const {
 // ============================================================
 // getMode() / 获取当前模式
 // ============================================================
-int NetworkManager::getMode() const {
+int DattNetworkManager::getMode() const {
     return _mode;
 }
 
@@ -145,7 +145,7 @@ int NetworkManager::getMode() const {
 // Based on verified code from esp32_sylvie.ino
 // 基于 esp32_sylvie.ino 中已验证的代码
 // ============================================================
-bool NetworkManager::startAP() {
+bool DattNetworkManager::startAP() {
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     IPAddress ip = WiFi.softAPIP();
 
@@ -162,7 +162,7 @@ bool NetworkManager::startAP() {
 // startSTA() - Station mode initialization (non-blocking)
 // 客户端模式初始化（非阻塞）
 // ============================================================
-bool NetworkManager::startSTA() {
+bool DattNetworkManager::startSTA() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(STA_SSID, STA_PASSWORD);
 
@@ -182,7 +182,7 @@ bool NetworkManager::startSTA() {
 // startMDNS() - Register mDNS service / 注册 mDNS 服务
 // Service: _datt_flower._tcp (as specified in AI_INSTRUCTIONS.md)
 // ============================================================
-bool NetworkManager::startMDNS() {
+bool DattNetworkManager::startMDNS() {
     // Use NODE_ID as the hostname / 使用 NODE_ID 作为主机名
     if (!MDNS.begin(NODE_ID)) {
         Serial.println("[NetworkManager] ERROR: mDNS failed to start / mDNS 启动失败");
@@ -211,7 +211,7 @@ bool NetworkManager::startMDNS() {
 // ============================================================
 // setupWebServer() - Configure HTTP endpoints / 配置 HTTP 端点
 // ============================================================
-void NetworkManager::setupWebServer() {
+void DattNetworkManager::setupWebServer() {
     if (_serverStarted) return;  // Prevent double-start / 防止重复启动
 
     // GET /config - Returns JSON describing this node's hardware

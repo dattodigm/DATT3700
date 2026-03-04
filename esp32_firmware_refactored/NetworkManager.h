@@ -15,7 +15,7 @@
  * Usage / 使用方法:
  *   #include "config.h"
  *   #include "NetworkManager.h"
- *   NetworkManager network;
+ *   DattNetworkManager network;
  *   void setup() { network.begin(); }
  *   void loop()  { network.update(); }
  */
@@ -36,12 +36,12 @@
  * 
  * 负责 WiFi 连接、mDNS 服务注册和极简配置 Web 服务器。
  */
-class NetworkManager {
+class DattNetworkManager {
 public:
     /**
      * Constructor / 构造函数
      */
-    NetworkManager();
+    DattNetworkManager();
 
     /**
      * Initialize network based on config.h settings.
