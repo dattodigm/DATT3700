@@ -81,7 +81,7 @@ Built for DATT3700 - Interactive Art and Technology
 
 ## 📄 License
 
-See [LICENSE](LICENSE) file for details.
+See [LICENSE](../LICENSE) file for details.
 
 ## 🤝 Contributing
 
