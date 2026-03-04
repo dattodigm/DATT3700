@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--camera", type=int, default=0, help="Camera index")
     parser.add_argument("--no-camera", action="store_true", help="Disable camera")
     parser.add_argument("--esp", type=str, default="192.168.4.1", help="ESP32 IP")
-    parser.add_argument("--port", type=int, default=5000, help="Flask port")
+    parser.add_argument("--port", type=int, default=15000, help="Flask port")
     args = parser.parse_args()
 
     # Configure OSC target
