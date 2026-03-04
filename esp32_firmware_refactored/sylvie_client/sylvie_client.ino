@@ -67,6 +67,9 @@ void routeMotor2(OSCMessage &msg, int addrOffset);
 void routeLED1(OSCMessage &msg, int addrOffset);
 void routeLED2(OSCMessage &msg, int addrOffset);
 void routePreset(OSCMessage &msg, int addrOffset);
+void printConnectedClients();
+void printSelfInfo();
+void handleSerialCommand();
 // ────────────────────────────────────────────────────────────
 
 // ============================================================
@@ -148,16 +151,17 @@ void setupWiFi() {
 }
 
 // ============================================================
-// 打印当前在线客户端（AP模式）
+// 打印当前在线客户端（AP 模式）
 // ============================================================
 void printConnectedClients() {
   if (!USE_AP_MODE) return;
   int count = WiFi.softAPgetStationNum();
-  Serial.printf("\n📡 当前在线客户端: %d\n", count);
+  Serial.printf("\n📡 当前在线客户端：%d\n", count);
   for (int i = 0; i < MAX_CLIENTS; i++) {
     if (clients[i].active) {
       uint32_t ip = clients[i].ip;
-      Serial.printf("  MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
+      Serial.printf("  [%d] MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
+        i,
         clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
         clients[i].mac[3], clients[i].mac[4], clients[i].mac[5],
         ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
@@ -166,8 +170,39 @@ void printConnectedClients() {
 }
 
 // ============================================================
+// 打印本机网络信息
+// ============================================================
+void printSelfInfo() {
+  Serial.println("\n=== 本机网络信息 ===");
+
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  Serial.printf("设备名：%s\n", MDNS_NAME);
+  Serial.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  if (USE_AP_MODE) {
+    Serial.printf("模式：AP (热点)\n");
+    Serial.printf("IP: %d.%d.%d.%d\n",
+      WiFi.softAPIP()[0], WiFi.softAPIP()[1],
+      WiFi.softAPIP()[2], WiFi.softAPIP()[3]);
+  } else {
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("模式：STA (客户端)\n");
+      Serial.printf("IP: %d.%d.%d.%d\n",
+        WiFi.localIP()[0], WiFi.localIP()[1],
+        WiFi.localIP()[2], WiFi.localIP()[3]);
+    } else {
+      Serial.println("模式：STA (未连接)");
+      Serial.println("IP: 未分配");
+    }
+  }
+  Serial.println("====================\n");
+}
+
+// ============================================================
 // 串口命令解析
-// 支持格式：motor1 1 / led1 255 0 0 / auto 0 / preset 2
+// 支持格式：motor1 1 / led1 255 0 0 / auto 0 / preset 2 / clients / selfinfo
 // ============================================================
 void handleSerialCommand() {
   if (!Serial.available()) return;
@@ -176,11 +211,11 @@ void handleSerialCommand() {
   if (line.startsWith("motor1")) {
     int dir = line.substring(7).toInt();
     setMotor(1, dir);
-    Serial.printf("电机A: %d\n", dir);
+    Serial.printf("电机 A: %d\n", dir);
   } else if (line.startsWith("motor2")) {
     int dir = line.substring(7).toInt();
     setMotor(2, dir);
-    Serial.printf("电机B: %d\n", dir);
+    Serial.printf("电机 B: %d\n", dir);
   } else if (line.startsWith("led1")) {
     int r, g, b;
     sscanf(line.c_str(), "led1 %d %d %d", &r, &g, &b);
@@ -193,11 +228,19 @@ void handleSerialCommand() {
     Serial.printf("LED2: R=%d G=%d B=%d\n", r, g, b);
   } else if (line.startsWith("auto")) {
     autoMode = line.substring(5).toInt();
-    Serial.printf("自动模式: %s\n", autoMode ? "开" : "关");
+    Serial.printf("自动模式：%s\n", autoMode ? "开" : "关");
   } else if (line.startsWith("preset")) {
     int p = line.substring(7).toInt();
     setPreset(p);
-    Serial.printf("预设场景: %d\n", p);
+    Serial.printf("预设场景：%d\n", p);
+  } else if (line.equals("clients")) {
+    if (USE_AP_MODE) {
+      printConnectedClients();
+    } else {
+      Serial.println("⚠️ 仅在 AP 模式下有效");
+    }
+  } else if (line.equals("selfinfo")) {
+    printSelfInfo();
   }
 }
 
@@ -239,17 +282,14 @@ void loop() {
       msg.route("/led1",   routeLED1);
       msg.route("/led2",   routeLED2);
       msg.route("/preset", routePreset);
+      msg.route("/info/clients", sendClientListOSC);
+      msg.route("/info/self", sendSelfInfoOSC);
     }
   }
 
   handleSerialCommand();
 
   if (autoMode) runAutoMode();
-
-//   if (millis() - lastClientScan > CLIENT_SCAN_INTERVAL) {
-//     lastClientScan = millis();
-//     printConnectedClients();
-//   }
 }
 
 // ============================================================
@@ -379,4 +419,69 @@ void setPreset(int preset) {
 void stopAll() {
   setMotor(1, 0); setMotor(2, 0);
   setLED(1, 0, 0, 0); setLED(2, 0, 0, 0);
+}
+
+
+// ============================================================
+// OSC 信息查询命令
+// ============================================================
+void sendClientListOSC() {
+  if (!USE_AP_MODE) return;
+
+  OSCMessage msg("/info/clients");
+  int count = WiFi.softAPgetStationNum();
+  msg.add(count);
+
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clients[i].active) {
+      uint32_t ip = clients[i].ip;
+      char macStr[18];
+      sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+        clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
+        clients[i].mac[3], clients[i].mac[4], clients[i].mac[5]);
+
+      char ipStr[16];
+      sprintf(ipStr, "%d.%d.%d.%d",
+        ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
+
+      msg.add(macStr);
+      msg.add(ipStr);
+    }
+  }
+
+  udp.beginPacket(udp.remoteIP(), udp.remotePort());
+  msg.send(udp);
+  udp.endPacket();
+  msg.empty();
+}
+
+void sendSelfInfoOSC() {
+  OSCMessage msg("/info/self");
+
+  msg.add(MDNS_NAME);
+
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macStr[18];
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  msg.add(macStr);
+
+  char modeStr[10];
+  strcpy(modeStr, USE_AP_MODE ? "AP" : "STA");
+  msg.add(modeStr);
+
+  char ipStr[16];
+  if (USE_AP_MODE || WiFi.status() == WL_CONNECTED) {
+    IPAddress ip = USE_AP_MODE ? WiFi.softAPIP() : WiFi.localIP();
+    sprintf(ipStr, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  } else {
+    strcpy(ipStr, "0.0.0.0");
+  }
+  msg.add(ipStr);
+
+  udp.beginPacket(udp.remoteIP(), udp.remotePort());
+  msg.send(udp);
+  udp.endPacket();
+  msg.empty();
 }
