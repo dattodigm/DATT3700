@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 
+from python_host.vision.face_tracker import FaceTracker
 from python_host.ui.app import app, osc
 
 
@@ -26,10 +27,10 @@ def main():
 
     # Start camera if enabled
     if not args.no_camera:
-        from python_host.ui.app import tracker as app_tracker
-        app_tracker.__init__(camera_index=args.camera)
+        import python_host.ui.app as app_module
+        app_module.tracker = FaceTracker(camera_index=args.camera)
         try:
-            app_tracker.start()
+            app_module.tracker.start()
         except RuntimeError as e:
             print(f"⚠️ Camera not available: {e}")
 

@@ -12,6 +12,9 @@ on:
       - "python_host/**"
       - ".github/workflows/python-ci.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test-core:
     name: Core Tests (no ML)

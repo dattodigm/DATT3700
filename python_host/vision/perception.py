@@ -129,8 +129,7 @@ class PerceptionModule:
             # ── MediaPipe Face Mesh ──
             if self._mp_face_mesh:
                 try:
-                    import cv2 as cv
-                    rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     mesh_result = self._mp_face_mesh.process(rgb)
                     if mesh_result.multi_face_landmarks:
                         landmarks = []
@@ -147,8 +146,7 @@ class PerceptionModule:
             # ── MediaPipe Pose ──
             if self._mp_pose:
                 try:
-                    import cv2 as cv
-                    rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     pose_result = self._mp_pose.process(rgb)
                     if pose_result.pose_landmarks:
                         results["pose_body"] = {

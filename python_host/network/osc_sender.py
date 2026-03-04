@@ -14,6 +14,7 @@ class OSCSender:
 
     def __init__(self):
         self._clients = {}       # name -> SimpleUDPClient
+        self._target_info = {}   # name -> (ip, port)
         self._lock = threading.Lock()
         self._override = False   # True = manual UI only, block CV auto
 
@@ -24,14 +25,16 @@ class OSCSender:
     def add_target(self, name, ip, port=8888):
         with self._lock:
             self._clients[name] = udp_client.SimpleUDPClient(ip, port)
+            self._target_info[name] = (ip, port)
 
     def remove_target(self, name):
         with self._lock:
             self._clients.pop(name, None)
+            self._target_info.pop(name, None)
 
     def list_targets(self):
         with self._lock:
-            return {n: (c._address, c._port) for n, c in self._clients.items()}
+            return dict(self._target_info)
 
     # ------------------------------------------------------------------
     # Override (manual vs auto)
