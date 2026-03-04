@@ -67,6 +67,8 @@ void routePreset(OSCMessage &msg, int addrOffset);
 void printConnectedClients();
 void printSelfInfo();
 void handleSerialCommand();
+void sendClientListOSC(OSCMessage &msg, int addrOffset);
+void sendSelfInfoOSC(OSCMessage &msg, int addrOffset);
 // ────────────────────────────────────────────────────────────
 
 // ============================================================
@@ -199,7 +201,7 @@ void printSelfInfo() {
 
 // ============================================================
 // 串口命令解析
-// 支持格式：motor1 1 / led1 255 0 0 / auto 0 / preset 2
+// 支持格式：motor1 1 / led1 255 0 0 / auto 0 / preset 2 / clients / selfinfo
 // ============================================================
 void handleSerialCommand() {
   if (!Serial.available()) return;
@@ -419,15 +421,16 @@ void stopAll() {
   setLED(1, 0, 0, 0); setLED(2, 0, 0, 0);
 }
 
+
 // ============================================================
 // OSC 信息查询命令
 // ============================================================
-void sendClientListOSC() {
+void sendClientListOSC(OSCMessage &msg, int addrOffset) {
   if (!USE_AP_MODE) return;
 
-  OSCMessage msg("/info/clients");
+  OSCMessage reply("/info/clients");
   int count = WiFi.softAPgetStationNum();
-  msg.add(count);
+  reply.add((int32_t)count);
 
   for (int i = 0; i < MAX_CLIENTS; i++) {
     if (clients[i].active) {
@@ -441,32 +444,32 @@ void sendClientListOSC() {
       sprintf(ipStr, "%d.%d.%d.%d",
         ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
 
-      msg.add(macStr);
-      msg.add(ipStr);
+      reply.add(macStr);
+      reply.add(ipStr);
     }
   }
 
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
-  msg.send(udp);
+  reply.send(udp);
   udp.endPacket();
-  msg.empty();
+  reply.empty();
 }
 
-void sendSelfInfoOSC() {
-  OSCMessage msg("/info/self");
+void sendSelfInfoOSC(OSCMessage &msg, int addrOffset) {
+  OSCMessage reply("/info/self");
 
-  msg.add(MDNS_NAME);
+  reply.add(MDNS_NAME);
 
   uint8_t mac[6];
   WiFi.macAddress(mac);
   char macStr[18];
   sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  msg.add(macStr);
+  reply.add(macStr);
 
   char modeStr[10];
   strcpy(modeStr, USE_AP_MODE ? "AP" : "STA");
-  msg.add(modeStr);
+  reply.add(modeStr);
 
   char ipStr[16];
   if (USE_AP_MODE || WiFi.status() == WL_CONNECTED) {
@@ -475,11 +478,10 @@ void sendSelfInfoOSC() {
   } else {
     strcpy(ipStr, "0.0.0.0");
   }
-  msg.add(ipStr);
+  reply.add(ipStr);
 
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
-  msg.send(udp);
+  reply.send(udp);
   udp.endPacket();
-  msg.empty();
+  reply.empty();
 }
-
