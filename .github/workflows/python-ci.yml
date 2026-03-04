@@ -1,0 +1,80 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main, "copilot/**"]
+    paths:
+      - "python_host/**"
+      - ".github/workflows/python-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "python_host/**"
+      - ".github/workflows/python-ci.yml"
+
+jobs:
+  test-core:
+    name: Core Tests (no ML)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python_host/requirements.txt
+          pip install pytest
+
+      - name: Run core tests
+        run: |
+          python -m pytest python_host/tests/ -v --tb=short
+
+  test-ml:
+    name: ML Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install all dependencies (core + ML)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python_host/requirements-ml.txt
+          pip install pytest
+
+      - name: Run all tests
+        run: |
+          python -m pytest python_host/tests/ -v --tb=short
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linter
+        run: pip install flake8
+
+      - name: Run flake8
+        run: |
+          flake8 python_host/ --max-line-length=120 --ignore=E402,W503,E501
