@@ -1,5 +1,5 @@
 /**
- * NetworkManager.cpp - Network Management Implementation / 网络管理模块实现
+ * MeshManager.cpp - Network Management Implementation / 网络管理模块实现
  * 
  * Implements WiFi AP/STA mode, mDNS discovery, and HTTP config endpoint.
  * Based on verified WiFi code from esp32_sylvie.ino.
@@ -8,17 +8,19 @@
  * 基于 esp32_sylvie.ino 中已验证的 WiFi 代码。
  */
 
-#include "NetworkManager.h"
+#include "MeshManager.h"
 
 // ============================================================
 // Constructor / 构造函数
 // ============================================================
-NetworkManager::NetworkManager()
+MeshManager::MeshManager()
     : _server(WEB_SERVER_PORT)
     , _connected(false)
     , _mdnsStarted(false)
     , _serverStarted(false)
     , _mode(NETWORK_MODE)
+    , _webServerPending(false)
+    , _webServerDeferMs(0)
     , _lastSTACheckMs(0)
     , _staRetryCount(0)
     , _staConnecting(false)
@@ -28,19 +30,19 @@ NetworkManager::NetworkManager()
 // ============================================================
 // begin() - Initialize network / 初始化网络
 // ============================================================
-bool NetworkManager::begin() {
+bool MeshManager::begin() {
     bool success = false;
 
     if (_mode == NETWORK_MODE_AP) {
         // --- Access Point mode / 热点模式 ---
-        Serial.println("[NetworkManager] Starting AP mode... / 正在启动热点模式...");
+        Serial.println("[MeshManager] Starting AP mode... / 正在启动热点模式...");
         success = startAP();
     } else if (_mode == NETWORK_MODE_STA) {
         // --- Station mode / 客户端模式 ---
-        Serial.println("[NetworkManager] Starting STA mode... / 正在启动客户端模式...");
+        Serial.println("[MeshManager] Starting STA mode... / 正在启动客户端模式...");
         success = startSTA();
     } else {
-        Serial.println("[NetworkManager] ERROR: Invalid NETWORK_MODE in config.h");
+        Serial.println("[MeshManager] ERROR: Invalid NETWORK_MODE in config.h");
         return false;
     }
 
@@ -48,9 +50,11 @@ bool NetworkManager::begin() {
         // Start mDNS service discovery / 启动 mDNS 服务发现
         startMDNS();
 
-        // Start web server in AP mode / 在热点模式下启动 Web 服务器
+        // Defer web server start for AP mode to allow TCP/IP stack to stabilize
+        // 延迟启动 Web 服务器（仅 AP 模式），等待 TCP/IP 栈稳定
         if (_mode == NETWORK_MODE_AP) {
-            setupWebServer();
+            _webServerPending = true;
+            _webServerDeferMs = millis();
         }
     }
 
@@ -60,7 +64,16 @@ bool NetworkManager::begin() {
 // ============================================================
 // update() - Non-blocking periodic tasks / 非阻塞周期性任务
 // ============================================================
-void NetworkManager::update() {
+void MeshManager::update() {
+    // Deferred web server start (AP mode only)
+    // 延迟启动 Web 服务器（仅 AP 模式）
+    if (_webServerPending && !_serverStarted) {
+        if (millis() - _webServerDeferMs >= WEB_SERVER_DEFER_MS) {
+            setupWebServer();
+            _webServerPending = false;
+        }
+    }
+
     // STA mode: non-blocking connection monitoring / STA 模式：非阻塞连接监控
     if (_mode == NETWORK_MODE_STA) {
         unsigned long now = millis();
@@ -74,7 +87,7 @@ void NetworkManager::update() {
                     // Connection established / 连接已建立
                     _connected = true;
                     _staConnecting = false;
-                    Serial.print("[NetworkManager] STA connected! IP: ");
+                    Serial.print("[MeshManager] STA connected! IP: ");
                     Serial.println(WiFi.localIP());
 
                     // Start mDNS now that we have an IP / 获得 IP 后启动 mDNS
@@ -83,27 +96,28 @@ void NetworkManager::update() {
                     }
                 } else {
                     _staRetryCount++;
-                    Serial.printf("[NetworkManager] STA connecting... attempt %d/%d\n",
+                    Serial.printf("[MeshManager] STA connecting... attempt %d/%d\n",
                                   _staRetryCount, STA_MAX_RETRIES);
 
                     if (_staRetryCount >= STA_MAX_RETRIES) {
                         // Give up and fall back to AP mode / 放弃并回退到热点模式
-                        Serial.println("[NetworkManager] STA failed. Falling back to AP mode...");
-                        Serial.println("[NetworkManager] STA 连接失败，回退到热点模式...");
+                        Serial.println("[MeshManager] STA failed. Falling back to AP mode...");
+                        Serial.println("[MeshManager] STA 连接失败，回退到热点模式...");
                         _staConnecting = false;
                         _mode = NETWORK_MODE_AP;
                         WiFi.disconnect();
                         startAP();
                         startMDNS();
-                        setupWebServer();
+                        _webServerPending = true;
+                        _webServerDeferMs = millis();
                     }
                 }
             }
         } else if (_connected && WiFi.status() != WL_CONNECTED) {
             // Lost connection, attempt reconnect / 连接断开，尝试重连
             _connected = false;
-            Serial.println("[NetworkManager] STA connection lost. Reconnecting...");
-            Serial.println("[NetworkManager] STA 连接断开，正在重连...");
+            Serial.println("[MeshManager] STA connection lost. Reconnecting...");
+            Serial.println("[MeshManager] STA 连接断开，正在重连...");
             WiFi.reconnect();
             _staConnecting = true;
             _staRetryCount = 0;
@@ -116,7 +130,7 @@ void NetworkManager::update() {
 // ============================================================
 // isConnected() / 检查连接状态
 // ============================================================
-bool NetworkManager::isConnected() const {
+bool MeshManager::isConnected() const {
     if (_mode == NETWORK_MODE_AP) {
         return _connected;  // AP is always "connected" once started / AP 启动后始终为"已连接"
     }
@@ -126,7 +140,7 @@ bool NetworkManager::isConnected() const {
 // ============================================================
 // getIP() / 获取 IP 地址
 // ============================================================
-IPAddress NetworkManager::getIP() const {
+IPAddress MeshManager::getIP() const {
     if (_mode == NETWORK_MODE_AP) {
         return WiFi.softAPIP();
     }
@@ -136,7 +150,7 @@ IPAddress NetworkManager::getIP() const {
 // ============================================================
 // getMode() / 获取当前模式
 // ============================================================
-int NetworkManager::getMode() const {
+int MeshManager::getMode() const {
     return _mode;
 }
 
@@ -145,13 +159,13 @@ int NetworkManager::getMode() const {
 // Based on verified code from esp32_sylvie.ino
 // 基于 esp32_sylvie.ino 中已验证的代码
 // ============================================================
-bool NetworkManager::startAP() {
+bool MeshManager::startAP() {
     WiFi.softAP(AP_SSID, AP_PASSWORD);
     IPAddress ip = WiFi.softAPIP();
 
-    Serial.print("[NetworkManager] AP started. SSID: ");
+    Serial.print("[MeshManager] AP started. SSID: ");
     Serial.println(AP_SSID);
-    Serial.print("[NetworkManager] AP IP address / 热点 IP 地址: ");
+    Serial.print("[MeshManager] AP IP address / 热点 IP 地址: ");
     Serial.println(ip);
 
     _connected = true;
@@ -162,11 +176,11 @@ bool NetworkManager::startAP() {
 // startSTA() - Station mode initialization (non-blocking)
 // 客户端模式初始化（非阻塞）
 // ============================================================
-bool NetworkManager::startSTA() {
+bool MeshManager::startSTA() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(STA_SSID, STA_PASSWORD);
 
-    Serial.print("[NetworkManager] Connecting to / 正在连接: ");
+    Serial.print("[MeshManager] Connecting to / 正在连接: ");
     Serial.println(STA_SSID);
 
     _staConnecting = true;
@@ -182,10 +196,10 @@ bool NetworkManager::startSTA() {
 // startMDNS() - Register mDNS service / 注册 mDNS 服务
 // Service: _datt_flower._tcp (as specified in AI_INSTRUCTIONS.md)
 // ============================================================
-bool NetworkManager::startMDNS() {
+bool MeshManager::startMDNS() {
     // Use NODE_ID as the hostname / 使用 NODE_ID 作为主机名
     if (!MDNS.begin(NODE_ID)) {
-        Serial.println("[NetworkManager] ERROR: mDNS failed to start / mDNS 启动失败");
+        Serial.println("[MeshManager] ERROR: mDNS failed to start / mDNS 启动失败");
         return false;
     }
 
@@ -199,10 +213,10 @@ bool NetworkManager::startMDNS() {
     MDNS.addServiceTxt(MDNS_SERVICE_NAME, MDNS_PROTOCOL, "firmware_version", FIRMWARE_VERSION);
 
     _mdnsStarted = true;
-    Serial.print("[NetworkManager] mDNS started: ");
+    Serial.print("[MeshManager] mDNS started: ");
     Serial.print(NODE_ID);
     Serial.println(".local");
-    Serial.println("[NetworkManager] Service registered / 服务已注册: "
+    Serial.println("[MeshManager] Service registered / 服务已注册: "
                    MDNS_SERVICE_NAME "." MDNS_PROTOCOL);
 
     return true;
@@ -211,7 +225,7 @@ bool NetworkManager::startMDNS() {
 // ============================================================
 // setupWebServer() - Configure HTTP endpoints / 配置 HTTP 端点
 // ============================================================
-void NetworkManager::setupWebServer() {
+void MeshManager::setupWebServer() {
     if (_serverStarted) return;  // Prevent double-start / 防止重复启动
 
     // GET /config - Returns JSON describing this node's hardware
@@ -259,6 +273,6 @@ void NetworkManager::setupWebServer() {
 
     _server.begin();
     _serverStarted = true;
-    Serial.printf("[NetworkManager] Web server started on port %d\n", WEB_SERVER_PORT);
-    Serial.println("[NetworkManager] Endpoints / 端点: GET /  GET /config");
+    Serial.printf("[MeshManager] Web server started on port %d\n", WEB_SERVER_PORT);
+    Serial.println("[MeshManager] Endpoints / 端点: GET /  GET /config");
 }

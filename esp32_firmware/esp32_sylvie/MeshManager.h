@@ -1,11 +1,16 @@
 /**
- * NetworkManager.h - Network Management Module / 网络管理模块
+ * MeshManager.h - Network Management Module / 网络管理模块
  * 
  * Encapsulates WiFi (AP/STA), mDNS discovery, and HTTP config server
  * into a reusable class for all ESP32 flower nodes.
  * 
  * 将 WiFi（AP/STA）、mDNS 发现和 HTTP 配置服务器
  * 封装为可复用的类，适用于所有 ESP32 花朵节点。
+ * 
+ * NOTE: Renamed from NetworkManager to MeshManager to avoid
+ * class name conflict with ESP32 built-in NetworkManager.
+ * 注意：从 NetworkManager 重命名为 MeshManager，
+ * 以避免与 ESP32 内置 NetworkManager 类名冲突。
  * 
  * Dependencies / 依赖库:
  *   - WiFi.h          (ESP32 built-in / ESP32 内置)
@@ -14,14 +19,14 @@
  * 
  * Usage / 使用方法:
  *   #include "config.h"
- *   #include "NetworkManager.h"
- *   NetworkManager network;
+ *   #include "MeshManager.h"
+ *   MeshManager network;
  *   void setup() { network.begin(); }
  *   void loop()  { network.update(); }
  */
 
-#ifndef NETWORK_MANAGER_H
-#define NETWORK_MANAGER_H
+#ifndef MESH_MANAGER_H
+#define MESH_MANAGER_H
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
@@ -29,19 +34,19 @@
 #include "config.h"
 
 /**
- * NetworkManager class / 网络管理器类
+ * MeshManager class / 网络管理器类
  * 
  * Handles WiFi connection, mDNS service registration,
  * and a minimal configuration web server.
  * 
  * 负责 WiFi 连接、mDNS 服务注册和极简配置 Web 服务器。
  */
-class NetworkManager {
+class MeshManager {
 public:
     /**
      * Constructor / 构造函数
      */
-    NetworkManager();
+    MeshManager();
 
     /**
      * Initialize network based on config.h settings.
@@ -121,10 +126,14 @@ private:
     bool           _serverStarted;     // Web server status / Web 服务器状态
     int            _mode;              // Current network mode / 当前网络模式
 
+    // Deferred web server start state / 延迟启动 Web 服务器状态
+    bool           _webServerPending;  // Whether web server needs to be started / 是否需要启动 Web 服务器
+    unsigned long  _webServerDeferMs;  // Timestamp when deferral began / 延迟开始时间戳
+
     // STA mode reconnection state / STA 模式重连状态
     unsigned long  _lastSTACheckMs;    // Last reconnect check time / 上次重连检查时间
     int            _staRetryCount;     // Current retry count / 当前重试次数
     bool           _staConnecting;     // Whether STA is attempting to connect / STA 是否正在尝试连接
 };
 
-#endif // NETWORK_MANAGER_H
+#endif // MESH_MANAGER_H
