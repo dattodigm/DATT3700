@@ -37,6 +37,11 @@ registry = load_registry()
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 SAMPLES_FILE = os.path.join(DATA_DIR, "training_samples.jsonl")
 
+# Camera lifecycle state: keep camera disabled until user starts it.
+_camera_lock = threading.Lock()
+_camera_running = False
+_camera_index = 0
+
 _devices_lock = threading.Lock()
 _devices = {}
 _selected_device = None
@@ -80,6 +85,36 @@ def _selected_target(fallback=None):
         return _selected_device
 
 
+def _set_camera_index(index):
+    global tracker, _camera_index
+    _camera_index = int(index)
+    tracker = FaceTracker(camera_index=_camera_index)
+
+
+def _start_camera(index=None):
+    global _camera_running
+    with _camera_lock:
+        if index is not None and int(index) != _camera_index:
+            _set_camera_index(index)
+        if _camera_running:
+            return True, "already_running"
+        try:
+            tracker.start()
+            _camera_running = True
+            return True, "started"
+        except RuntimeError as exc:
+            _camera_running = False
+            return False, str(exc)
+
+
+def _stop_camera():
+    global _camera_running
+    with _camera_lock:
+        if _camera_running:
+            tracker.stop()
+        _camera_running = False
+
+
 # ── Routes ───────────────────────────────────────────────────
 
 
@@ -93,6 +128,11 @@ def index():
 
 def _generate_frames():
     while True:
+        with _camera_lock:
+            running = _camera_running
+        if not running:
+            break
+
         jpeg = tracker.get_frame_jpeg()
         if jpeg is None:
             time.sleep(0.03)
@@ -105,6 +145,9 @@ def _generate_frames():
 
 @app.route("/video_feed")
 def video_feed():
+    with _camera_lock:
+        if not _camera_running:
+            return ("", 204)
     return Response(
         _generate_frames(),
         mimetype="multipart/x-mixed-replace; boundary=frame",
@@ -116,9 +159,14 @@ def video_feed():
 
 @app.route("/api/faces")
 def api_faces():
+    with _camera_lock:
+        running = _camera_running
+    if not running:
+        return jsonify({"camera_running": False, "primary": None, "faces": []})
+
     target = tracker.get_primary_target()
     faces = tracker.get_all_faces()
-    return jsonify({"primary": target, "faces": faces})
+    return jsonify({"camera_running": True, "primary": target, "faces": faces})
 
 
 # ── Camera switching ─────────────────────────────────────────
@@ -129,11 +177,40 @@ def api_cameras():
     return jsonify({"cameras": FaceTracker.list_cameras()})
 
 
+@app.route("/api/camera/state")
+def api_camera_state():
+    with _camera_lock:
+        return jsonify({"running": _camera_running, "index": _camera_index})
+
+
+@app.route("/api/camera/start", methods=["POST"])
+def api_camera_start():
+    payload = request.json or {}
+    idx = int(payload.get("index", _camera_index))
+    ok, detail = _start_camera(index=idx)
+    code = 200 if ok else 500
+    return jsonify({"status": "ok" if ok else "error", "running": ok, "index": _camera_index, "detail": detail}), code
+
+
+@app.route("/api/camera/stop", methods=["POST"])
+def api_camera_stop():
+    _stop_camera()
+    return jsonify({"status": "ok", "running": False, "index": _camera_index})
+
+
 @app.route("/api/camera/switch", methods=["POST"])
 def api_camera_switch():
-    idx = request.json.get("index", 0)
-    tracker.switch_camera(int(idx))
-    return jsonify({"status": "ok", "camera": idx})
+    idx = int((request.json or {}).get("index", 0))
+    with _camera_lock:
+        was_running = _camera_running
+    if was_running:
+        _stop_camera()
+        ok, detail = _start_camera(index=idx)
+        code = 200 if ok else 500
+        return jsonify({"status": "ok" if ok else "error", "camera": idx, "running": ok, "detail": detail}), code
+
+    _set_camera_index(idx)
+    return jsonify({"status": "ok", "camera": idx, "running": False})
 
 
 # ── Device discovery & selection ─────────────────────────────
@@ -349,8 +426,10 @@ def api_perception_status():
 
 def create_app(camera_index=0, esp32_targets=None):
     """Factory for external callers / testing."""
-    global tracker, _selected_device
+    global tracker, _selected_device, _camera_index, _camera_running
     tracker = FaceTracker(camera_index=camera_index)
+    _camera_index = int(camera_index)
+    _camera_running = False
     if esp32_targets:
         for name, (ip, port) in esp32_targets.items():
             _register_device({"name": name, "ip": ip, "port": port, "source": "bootstrap"})
@@ -359,7 +438,6 @@ def create_app(camera_index=0, esp32_targets=None):
 
 
 if __name__ == "__main__":
-    tracker.start()
     _register_device({"name": "sylvie_1", "ip": "192.168.4.1", "port": 8888, "source": "default"})
     _selected_device = "sylvie_1"
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

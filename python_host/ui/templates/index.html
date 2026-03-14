@@ -15,11 +15,19 @@
   <div class="p-4 grid grid-cols-1 xl:grid-cols-2 gap-4 max-w-7xl mx-auto">
     <section class="space-y-4">
       <div class="bg-slate-800 rounded-2xl overflow-hidden shadow-xl">
-        <img id="videoFeed" src="/video_feed" class="w-full aspect-video object-cover" alt="Live feed">
+        <img id="videoFeed" src="" class="w-full aspect-video object-cover bg-slate-950" alt="Live feed">
       </div>
+
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-2">Camera</h2>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <select id="cameraSelect" class="bg-slate-700 rounded px-2 py-1 text-sm w-36"></select>
+          <button id="startCamera" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm font-semibold">Start</button>
+          <button id="stopCamera" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Stop</button>
+          <span id="cameraStatus" class="text-xs text-slate-400">Camera: off</span>
+        </div>
         <h2 class="text-sm font-semibold text-slate-400 mb-2">Primary Face</h2>
-        <div id="faceInfo" class="font-mono text-slate-300">No face detected</div>
+        <div id="faceInfo" class="font-mono text-slate-300">Camera is off</div>
       </div>
 
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
@@ -48,7 +56,8 @@
     <section class="space-y-4">
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-slate-400 mb-3">Node Controls</h2>
-        <div id="nodeControls" class="space-y-3 text-sm text-slate-300">Scan and select a device to load controls.</div>
+        <div id="nodeTypeTabs" class="flex flex-wrap gap-2 mb-3"></div>
+        <div id="nodeControls" class="space-y-3 text-sm text-slate-300">Pick a tab for offline debug, or select a device to follow.</div>
       </div>
 
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
@@ -70,6 +79,7 @@
   let registry = {};
   let devices = [];
   let selected = null;
+  let forcedNodeType = null;
 
   async function getJSON(url) {
     const r = await fetch(url);
@@ -87,7 +97,7 @@
 
   function parseArgs(raw) {
     if (!raw.trim()) return [];
-    return raw.split(',').map(item => {
+    return raw.split(',').map((item) => {
       const v = item.trim();
       if (/^-?\d+$/.test(v)) return parseInt(v, 10);
       return v;
@@ -95,13 +105,69 @@
   }
 
   function selectedDevice() {
-    return devices.find(d => d.name === selected) || null;
+    return devices.find((d) => d.name === selected) || null;
+  }
+
+  function activeNodeType() {
+    const d = selectedDevice();
+    if (forcedNodeType) return forcedNodeType;
+    return d ? d.node_type : 'unknown';
+  }
+
+  function renderTabs() {
+    const holder = document.getElementById('nodeTypeTabs');
+    const nodeTypes = (registry && registry.node_types) || {};
+    const keys = Object.keys(nodeTypes);
+    if (!keys.length) {
+      holder.innerHTML = '';
+      return;
+    }
+
+    const active = activeNodeType();
+    let html = `<button class="${forcedNodeType === null ? 'bg-sky-600' : 'bg-slate-700'} hover:bg-sky-500 rounded px-2 py-1 text-xs" data-node="__follow">Follow Device</button>`;
+    keys.forEach((key) => {
+      const on = key === active;
+      const label = nodeTypes[key].label || key;
+      html += `<button class="${on ? 'bg-indigo-600' : 'bg-slate-700'} hover:bg-indigo-500 rounded px-2 py-1 text-xs" data-node="${key}">${label}</button>`;
+    });
+    holder.innerHTML = html;
+
+    holder.querySelectorAll('button').forEach((btn) => {
+      btn.onclick = () => {
+        const node = btn.getAttribute('data-node');
+        forcedNodeType = (node === '__follow') ? null : node;
+        renderDeviceList();
+        renderControls();
+      };
+    });
+  }
+
+  async function refreshCameraState() {
+    const s = await getJSON('/api/camera/state');
+    const running = !!s.running;
+    document.getElementById('cameraStatus').textContent = `Camera: ${running ? 'on' : 'off'} (index ${s.index})`;
+    document.getElementById('videoFeed').src = running ? `/video_feed?ts=${Date.now()}` : '';
+    if (!running) {
+      document.getElementById('faceInfo').textContent = 'Camera is off';
+    }
+  }
+
+  async function loadCameraList() {
+    const c = await getJSON('/api/cameras');
+    const sel = document.getElementById('cameraSelect');
+    sel.innerHTML = '';
+    (c.cameras || [0]).forEach((i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `Camera ${i}`;
+      sel.appendChild(opt);
+    });
   }
 
   function renderDeviceList() {
     const sel = document.getElementById('deviceSelect');
     sel.innerHTML = '';
-    devices.forEach(d => {
+    devices.forEach((d) => {
       const opt = document.createElement('option');
       opt.value = d.name;
       opt.textContent = `${d.name} (${d.node_type}) @ ${d.ip}`;
@@ -110,79 +176,16 @@
     });
 
     const info = selectedDevice();
+    const tabText = forcedNodeType ? ` | tab: ${forcedNodeType}` : '';
     document.getElementById('connStatus').textContent = info
-      ? `Selected: ${info.name} (${info.node_type})`
-      : 'No device selected';
+      ? `Selected: ${info.name} (${info.node_type})${tabText}`
+      : `No device selected${tabText}`;
 
     document.getElementById('deviceMeta').textContent = info
       ? `IP ${info.ip}:${info.port} | source: ${info.source}`
-      : 'No node selected';
-  }
+      : 'No node selected (use tabs for offline panel debug)';
 
-  function renderControls() {
-    const holder = document.getElementById('nodeControls');
-    const d = selectedDevice();
-    if (!d) {
-      holder.textContent = 'Scan and select a device to load controls.';
-      return;
-    }
-
-    if (d.node_type === 'sylvie') {
-      holder.innerHTML = `
-        <div class="flex gap-2 items-center">
-          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/auto',[1])">Auto ON</button>
-          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/auto',[0])">Manual</button>
-          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/preset',[3])">STOP</button>
-        </div>
-        ${motorCard(1)}
-        ${motorCard(2)}
-        ${ledCard(1)}
-        ${ledCard(2)}
-        <div class="flex gap-2">
-          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/preset',[1])">Preset 1</button>
-          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/preset',[2])">Preset 2</button>
-        </div>
-      `;
-      return;
-    }
-
-    if (d.node_type === 'sue') {
-      holder.innerHTML = `
-        <div class="flex gap-2 flex-wrap">
-          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['relax'])">Relax</button>
-          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['danger'])">Danger</button>
-          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['idle'])">Idle</button>
-          <button class="bg-red-700 hover:bg-red-600 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
-        </div>
-        <div>Angle <input id="sueAngle" type="range" min="0" max="180" value="90" class="w-full" oninput="sendRaw('/angle',[parseInt(this.value)])"></div>
-        <div>Speed <input id="sueSpeed" type="range" min="1" max="200" value="20" class="w-full" oninput="sendRaw('/speed',[parseInt(this.value)])"></div>
-        <div class="grid grid-cols-2 gap-2">
-          <label>Red <input id="sueR" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLED()"></label>
-          <label>Green <input id="sueG" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLED()"></label>
-        </div>
-      `;
-      return;
-    }
-
-    if (d.node_type === 'face_track') {
-      const groups = [1, 2, 3, 4].map(i => `
-        <div class="grid grid-cols-2 gap-2">
-          <label>Flower ${i} Pan <input id="pan${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
-          <label>Flower ${i} Tilt <input id="tilt${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
-        </div>
-      `).join('');
-
-      holder.innerHTML = `
-        <div class="flex gap-2 flex-wrap">
-          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[1])">Auto Track ON</button>
-          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/track/auto',[0])">Auto Track OFF</button>
-        </div>
-        ${groups}
-      `;
-      return;
-    }
-
-    holder.innerHTML = '<div class="text-slate-400">Unknown node type. Use Raw OSC Console.</div>';
+    renderTabs();
   }
 
   function motorCard(id) {
@@ -210,6 +213,68 @@
         <button class="bg-sky-600 hover:bg-sky-500 rounded px-2 py-1" onclick="sendLED(${id})">Set</button>
       </div>
     `;
+  }
+
+  function renderControls() {
+    const holder = document.getElementById('nodeControls');
+    const nodeType = activeNodeType();
+
+    if (nodeType === 'sylvie') {
+      holder.innerHTML = `
+        <div class="flex gap-2 items-center">
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/auto',[1])">Auto ON</button>
+          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/auto',[0])">Manual</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/preset',[3])">STOP</button>
+        </div>
+        ${motorCard(1)}
+        ${motorCard(2)}
+        ${ledCard(1)}
+        ${ledCard(2)}
+        <div class="flex gap-2">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/preset',[1])">Preset 1</button>
+          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/preset',[2])">Preset 2</button>
+        </div>
+      `;
+      return;
+    }
+
+    if (nodeType === 'sue') {
+      holder.innerHTML = `
+        <div class="flex gap-2 flex-wrap">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['relax'])">Relax</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['danger'])">Danger</button>
+          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['idle'])">Idle</button>
+          <button class="bg-red-700 hover:bg-red-600 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
+        </div>
+        <div>Angle <input id="sueAngle" type="range" min="0" max="180" value="90" class="w-full" oninput="sendRaw('/angle',[parseInt(this.value)])"></div>
+        <div>Speed <input id="sueSpeed" type="range" min="1" max="200" value="20" class="w-full" oninput="sendRaw('/speed',[parseInt(this.value)])"></div>
+        <div class="grid grid-cols-2 gap-2">
+          <label>Red <input id="sueR" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLED()"></label>
+          <label>Green <input id="sueG" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLED()"></label>
+        </div>
+      `;
+      return;
+    }
+
+    if (nodeType === 'face_track') {
+      const groups = [1, 2, 3, 4].map((i) => `
+        <div class="grid grid-cols-2 gap-2">
+          <label>Flower ${i} Pan <input id="pan${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
+          <label>Flower ${i} Tilt <input id="tilt${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
+        </div>
+      `).join('');
+
+      holder.innerHTML = `
+        <div class="flex gap-2 flex-wrap">
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[1])">Auto Track ON</button>
+          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/track/auto',[0])">Auto Track OFF</button>
+        </div>
+        ${groups}
+      `;
+      return;
+    }
+
+    holder.innerHTML = '<div class="text-slate-400">Unknown node type. Use Raw OSC Console.</div>';
   }
 
   async function sendRaw(address, args) {
@@ -263,7 +328,7 @@
 
   async function refreshHistory() {
     const data = await getJSON('/api/osc/history?limit=30');
-    const items = (data.items || []).map(item => {
+    const items = (data.items || []).map((item) => {
       const dt = new Date(item.ts * 1000).toLocaleTimeString();
       return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
     });
@@ -295,18 +360,37 @@
 
     document.getElementById('refreshHistory').onclick = refreshHistory;
 
+    document.getElementById('startCamera').onclick = async () => {
+      const idx = parseInt(document.getElementById('cameraSelect').value || '0', 10);
+      await postJSON('/api/camera/start', { index: idx });
+      await refreshCameraState();
+    };
+
+    document.getElementById('stopCamera').onclick = async () => {
+      await postJSON('/api/camera/stop', {});
+      await refreshCameraState();
+    };
+
     setInterval(async () => {
       try {
         const data = await getJSON('/api/faces');
         const el = document.getElementById('faceInfo');
+        if (!data.camera_running) {
+          el.textContent = 'Camera is off';
+          return;
+        }
         if (data.primary) {
           el.textContent = `X:${data.primary[0].toFixed(3)} Y:${data.primary[1].toFixed(3)} W:${data.primary[2].toFixed(1)}`;
         } else {
           el.textContent = 'No face detected';
         }
-      } catch (e) {}
+      } catch (e) {
+        // keep silent
+      }
     }, 600);
 
+    await loadCameraList();
+    await refreshCameraState();
     await refreshDevices();
     await refreshHistory();
   }

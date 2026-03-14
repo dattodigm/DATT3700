@@ -173,3 +173,27 @@ class TestFlaskAPI:
         hist_data = json.loads(history.data)
         assert "items" in hist_data
 
+    def test_api_camera_state(self, client):
+        resp = client.get("/api/camera/state")
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert "running" in data
+        assert "index" in data
+
+    def test_api_camera_start_stop_mocked(self, client, monkeypatch):
+        monkeypatch.setattr(app_module, "_start_camera", lambda index=None: (True, "started"))
+        monkeypatch.setattr(app_module, "_stop_camera", lambda: None)
+
+        start = client.post(
+            "/api/camera/start",
+            data=json.dumps({"index": 0}),
+            content_type="application/json",
+        )
+        assert start.status_code == 200
+
+        stop = client.post(
+            "/api/camera/stop",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        assert stop.status_code == 200
