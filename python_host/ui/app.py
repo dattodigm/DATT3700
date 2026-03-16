@@ -281,16 +281,7 @@ def api_devices_select():
     return jsonify({"status": "ok", "selected": _selected_device})
 
 
-@app.route("/api/devices/scan", methods=["POST"])
-def api_devices_scan():
-    global _selected_device
-
-    data = request.json or {}
-    mode = data.get("mode", "auto")
-    timeout_sec = float(data.get("timeout", 1.2))
-    gateway_ip = data.get("gateway_ip", "192.168.4.1")
-    gateway_port = int(data.get("gateway_port", 8888))
-
+def _scan_and_register_devices(mode="auto", timeout_sec=1.2, gateway_ip="192.168.4.1", gateway_port=8888):
     discovered = []
     if mode in ("mdns", "auto"):
         discovered.extend(discover_mdns_nodes(timeout_sec=timeout_sec, registry=registry))
@@ -313,6 +304,25 @@ def api_devices_scan():
             continue
         seen.add(key)
         merged.append(_register_device(item))
+    return merged
+
+
+@app.route("/api/devices/scan", methods=["POST"])
+def api_devices_scan():
+    global _selected_device
+
+    data = request.json or {}
+    mode = data.get("mode", "auto")
+    timeout_sec = float(data.get("timeout", 1.2))
+    gateway_ip = data.get("gateway_ip", "192.168.4.1")
+    gateway_port = int(data.get("gateway_port", 8888))
+
+    merged = _scan_and_register_devices(
+        mode=mode,
+        timeout_sec=timeout_sec,
+        gateway_ip=gateway_ip,
+        gateway_port=gateway_port,
+    )
 
     if merged and _selected_device is None:
         _selected_device = merged[0]["name"]
@@ -327,6 +337,26 @@ def api_devices_scan():
         }
     )
 
+
+@app.route("/api/discovery/mdns")
+def api_discovery_mdns():
+    merged = _scan_and_register_devices(mode="mdns")
+    return jsonify({"status": "ok", "mode": "mdns", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
+
+
+@app.route("/api/discovery/gateway", methods=["POST"])
+def api_discovery_gateway():
+    data = request.json or {}
+    gateway_ip = data.get("gateway_ip") or data.get("ip") or "192.168.4.1"
+    gateway_port = int(data.get("gateway_port") or data.get("port") or 8888)
+    merged = _scan_and_register_devices(mode="gateway", gateway_ip=gateway_ip, gateway_port=gateway_port)
+    return jsonify({"status": "ok", "mode": "gateway", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
+
+
+@app.route("/api/discovery/auto", methods=["POST"])
+def api_discovery_auto():
+    merged = _scan_and_register_devices(mode="auto")
+    return jsonify({"status": "ok", "mode": "auto", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
 
 # ── OSC control endpoints ────────────────────────────────────
 

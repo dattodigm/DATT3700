@@ -10,7 +10,7 @@
 // ============================================================
 
 // --- 模式选择：true = 热点模式(AP)，false = 连接已有WiFi(STA) ---
-#define USE_AP_MODE  false
+#define USE_AP_MODE  true
 
 // --- 热点模式配置 ---
 const char* AP_SSID     = "F7OWER";
@@ -21,7 +21,7 @@ const char* STA_SSID     = "MisAXNet";
 const char* STA_PASSWORD = "AX6000@O26";
 
 // --- mDNS 设备广播名称（局域网内可用 sylvie.local 访问）---
-const char* MDNS_NAME = "sylvie";
+const char* MDNS_NAME = "sylvie_1";
 
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;

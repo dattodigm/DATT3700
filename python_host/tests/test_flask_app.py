@@ -252,3 +252,53 @@ class TestFlaskAPI:
         data = json.loads(resp.data)
         assert "ports" in data
         assert "serial" in data
+
+    def test_api_discovery_compat_mdns(self, client, monkeypatch):
+        monkeypatch.setattr(
+            app_module,
+            "discover_mdns_nodes",
+            lambda timeout_sec, registry: [
+                {
+                    "name": "sylvie_1",
+                    "ip": "192.168.4.1",
+                    "port": 8888,
+                    "node_type": "sylvie",
+                    "source": "mdns",
+                    "metadata": {},
+                }
+            ],
+        )
+        monkeypatch.setattr(app_module, "discover_nodes_via_gateway", lambda **kwargs: [])
+
+        resp = client.get("/api/discovery/mdns")
+        assert resp.status_code == 200
+        payload = json.loads(resp.data)
+        assert payload["status"] == "ok"
+        assert any(d["name"] == "sylvie_1" for d in payload["devices"])
+
+    def test_api_discovery_compat_gateway(self, client, monkeypatch):
+        monkeypatch.setattr(app_module, "discover_mdns_nodes", lambda timeout_sec, registry: [])
+        monkeypatch.setattr(
+            app_module,
+            "discover_nodes_via_gateway",
+            lambda **kwargs: [
+                {
+                    "name": "sylvie_1",
+                    "ip": "192.168.4.1",
+                    "port": 8888,
+                    "node_type": "sylvie",
+                    "source": "gateway_self",
+                    "metadata": {},
+                }
+            ],
+        )
+
+        resp = client.post(
+            "/api/discovery/gateway",
+            data=json.dumps({"ip": "192.168.4.1", "port": 8888}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        payload = json.loads(resp.data)
+        assert payload["status"] == "ok"
+        assert any(d["name"] == "sylvie_1" for d in payload["devices"])

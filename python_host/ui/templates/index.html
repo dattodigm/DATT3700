@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DATT3700 Multi-Node Control</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel-fallback.css') }}">
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen">
   <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between">
@@ -40,6 +41,10 @@
         <div class="flex gap-2">
           <input id="gatewayIP" aria-label="Gateway IP" value="192.168.4.1" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Gateway IP">
           <input id="gatewayPort" aria-label="Gateway port" value="8888" class="bg-slate-700 rounded px-2 py-1 text-sm w-24" placeholder="Port">
+        </div>
+        <div class="flex gap-2 mt-2">
+          <input id="manualName" aria-label="Manual device name" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Device name (optional)">
+          <button id="addManual" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm font-semibold">Add Manual</button>
         </div>
       </div>
 
@@ -451,6 +456,57 @@
     await sendRaw(`/flower${idx}`, [pan, tilt]);
   }
 
+  async function scan(mode) {
+    const gateway_ip = document.getElementById('gatewayIP').value;
+    const gateway_port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const data = await postJSON('/api/devices/scan', { mode, gateway_ip, gateway_port });
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    renderDeviceList();
+    renderControls();
+  }
+
+  async function refreshDevices() {
+    const data = await getJSON('/api/devices');
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    renderDeviceList();
+    renderControls();
+  }
+
+  async function refreshHistory() {
+    const data = await getJSON('/api/osc/history?limit=30');
+    const items = (data.items || []).map((item) => {
+      const dt = new Date(item.ts * 1000).toLocaleTimeString();
+      return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
+    });
+    document.getElementById('oscLog').textContent = items.join('\n');
+  }
+
+  async function addManualDevice() {
+    const ip = (document.getElementById('gatewayIP').value || '').trim();
+    const port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const nameInput = (document.getElementById('manualName').value || '').trim();
+    if (!ip) {
+      document.getElementById('connStatus').textContent = 'Manual add failed: empty IP';
+      return;
+    }
+
+    const fallbackName = `manual_${ip.replace(/\./g, '_')}_${port}`;
+    const payload = {
+      name: nameInput || fallbackName,
+      ip,
+      port,
+      node_type: activeNodeType() === 'unknown' ? null : activeNodeType(),
+    };
+
+    const resp = await postJSON('/api/osc/target', payload);
+    if (resp && resp.status === 'ok' && resp.device) {
+      selected = resp.device.name;
+    }
+    await refreshDevices();
+  }
+
   async function getTrackingConfig() {
     trackingState = await getJSON('/api/tracking/config');
     return trackingState;
@@ -531,6 +587,7 @@
     document.getElementById('scanMDNS').onclick = () => scan('mdns');
     document.getElementById('scanGateway').onclick = () => scan('gateway');
     document.getElementById('scanAuto').onclick = () => scan('auto');
+    document.getElementById('addManual').onclick = addManualDevice;
 
     document.getElementById('selectDevice').onclick = async () => {
       const name = document.getElementById('deviceSelect').value;
