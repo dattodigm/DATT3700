@@ -253,6 +253,22 @@ class TestFlaskAPI:
         assert "ports" in data
         assert "serial" in data
 
+    def test_api_serial_ports_no_scan_default(self, client, monkeypatch):
+        monkeypatch.setattr(app_module.serial_sender, "list_ports", lambda: [{"device": "/dev/tty.usbmodem", "description": "mock"}])
+        resp = client.get("/api/serial/ports")
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["scanned"] is False
+        assert data["ports"] == []
+
+    def test_api_serial_ports_with_scan(self, client, monkeypatch):
+        monkeypatch.setattr(app_module.serial_sender, "list_ports", lambda: [{"device": "/dev/tty.usbmodem", "description": "mock"}])
+        resp = client.get("/api/serial/ports?scan=1")
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["scanned"] is True
+        assert len(data["ports"]) == 1
+
     def test_api_discovery_compat_mdns(self, client, monkeypatch):
         monkeypatch.setattr(
             app_module,
@@ -302,3 +318,22 @@ class TestFlaskAPI:
         payload = json.loads(resp.data)
         assert payload["status"] == "ok"
         assert any(d["name"] == "sylvie_1" for d in payload["devices"])
+
+    def test_api_serial_raw(self, client, monkeypatch):
+        monkeypatch.setattr(app_module.serial_sender, "send_line", lambda line: line == "help")
+        ok = client.post(
+            "/api/serial/raw",
+            data=json.dumps({"line": "help"}),
+            content_type="application/json",
+        )
+        assert ok.status_code == 200
+        ok_data = json.loads(ok.data)
+        assert ok_data["status"] == "ok"
+
+        bad = client.post(
+            "/api/serial/raw",
+            data=json.dumps({"line": ""}),
+            content_type="application/json",
+        )
+        assert bad.status_code == 400
+

@@ -1,19 +1,13 @@
-"""Minimal serial coordinate sender with optional pyserial dependency."""
+"""Minimal serial coordinate sender with optional lazy pyserial loading."""
 
 from __future__ import annotations
 
+import importlib
 import threading
-
-try:
-    import serial
-    from serial.tools import list_ports
-except ImportError:  # pragma: no cover - optional in CI
-    serial = None
-    list_ports = None
 
 
 class SerialCoordinateSender:
-    """Sends face coordinates over USB serial to ESP32 firmware."""
+    """Sends face coordinates or raw lines over USB serial to ESP32 firmware."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -21,16 +15,35 @@ class SerialCoordinateSender:
         self._port = ""
         self._baud = 115200
         self._last_error = ""
+        self._serial_mod = None
+        self._list_ports_mod = None
+
+    def _ensure_pyserial(self) -> bool:
+        if self._serial_mod is not None and self._list_ports_mod is not None:
+            return True
+        try:
+            self._serial_mod = importlib.import_module("serial")
+            self._list_ports_mod = importlib.import_module("serial.tools.list_ports")
+            self._last_error = ""
+            return True
+        except Exception as exc:  # pragma: no cover - environment dependent
+            self._serial_mod = None
+            self._list_ports_mod = None
+            self._last_error = str(exc)
+            return False
 
     @property
     def available(self) -> bool:
-        return serial is not None
+        # Do not import pyserial eagerly during app startup.
+        if self._serial_mod is not None:
+            return True
+        return self._ensure_pyserial()
 
     def list_ports(self) -> list[dict]:
-        if list_ports is None:
+        if not self._ensure_pyserial():
             return []
         out = []
-        for p in list_ports.comports():
+        for p in self._list_ports_mod.comports():
             out.append({"device": p.device, "description": p.description})
         return out
 
@@ -42,7 +55,7 @@ class SerialCoordinateSender:
                 self._baud = int(baud)
 
     def connect(self) -> tuple[bool, str]:
-        if serial is None:
+        if not self._ensure_pyserial():
             return False, "pyserial not installed"
 
         with self._lock:
@@ -57,7 +70,7 @@ class SerialCoordinateSender:
                 self._conn = None
 
             try:
-                self._conn = serial.Serial(self._port, self._baud, timeout=0, write_timeout=0)
+                self._conn = self._serial_mod.Serial(self._port, self._baud, timeout=0, write_timeout=0)
                 self._last_error = ""
                 return True, "connected"
             except Exception as exc:  # pragma: no cover - hardware dependent
@@ -75,15 +88,19 @@ class SerialCoordinateSender:
         with self._lock:
             connected = bool(self._conn and self._conn.is_open)
             return {
-                "available": self.available,
+                "available": bool(self._serial_mod is not None or self._list_ports_mod is not None),
                 "connected": connected,
                 "port": self._port,
                 "baud": int(self._baud),
                 "last_error": self._last_error,
             }
 
-    def send_xy(self, x: int, y: int) -> bool:
-        line = f"{int(x)},{int(y)}\n"
+    def send_line(self, text: str) -> bool:
+        line = str(text or "").strip()
+        if not line:
+            return False
+        if not line.endswith("\n"):
+            line += "\n"
 
         with self._lock:
             conn = self._conn
@@ -102,3 +119,5 @@ class SerialCoordinateSender:
                 self._last_error = str(exc)
             return False
 
+    def send_xy(self, x: int, y: int) -> bool:
+        return self.send_line(f"{int(x)},{int(y)}")

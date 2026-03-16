@@ -436,7 +436,21 @@ def api_osc_stop():
 
 @app.route("/api/serial/ports")
 def api_serial_ports():
-    return jsonify({"ports": serial_sender.list_ports(), "serial": serial_sender.status()})
+    # Only enumerate ports when explicitly requested to avoid unnecessary serial probing.
+    do_scan = str(request.args.get("scan", "0")).lower() in ("1", "true", "yes")
+    ports = serial_sender.list_ports() if do_scan else []
+    return jsonify({"ports": ports, "serial": serial_sender.status(), "scanned": do_scan})
+
+
+@app.route("/api/serial/raw", methods=["POST"])
+def api_serial_raw():
+    payload = request.json or {}
+    line = str(payload.get("line", "")).strip()
+    if not line:
+        return jsonify({"status": "error", "message": "empty command"}), 400
+
+    sent = serial_sender.send_line(line)
+    return jsonify({"status": "ok" if sent else "error", "sent": bool(sent), "serial": serial_sender.status()})
 
 
 @app.route("/api/tracking/config", methods=["GET", "POST"])

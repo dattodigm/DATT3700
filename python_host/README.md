@@ -8,8 +8,10 @@ Flask control panel for DATT3700 multi-node ESP32 setup.
 - Gateway fallback scan via OSC (`/info/clients`, `/info/self`)
 - Discovery API compatibility routes (`/api/devices/scan` and `/api/discovery/*`)
 - Node-type-aware control rendering for `sylvie`, `sue`, `kait`, `face_track`
+- `sylvie` manual control UX: signed motor sliders (-255..255), dead-zone snap, and 2D drive pad
 - Face-tracking coordinate publisher with transport switch (`OSC / Wi-Fi` or `USB serial`)
 - Face-tracking panel actions: auto tracking ON/OFF, transport config, serial port connect
+- Optional serial debug command sender (`POST /api/serial/raw`)
 - Offline CSS fallback (`ui/static/panel-fallback.css`) when Tailwind CDN is unreachable
 - Universal raw OSC console with send/receive history
 - Motion sequence recorder with label folders (`data/sequences/<label>`)
@@ -33,8 +35,9 @@ Open `http://127.0.0.1:15000`.
 - `POST /api/devices/select`
 - `POST /api/osc/raw`
 - `GET /api/osc/history`
+- `GET /api/serial/ports?scan=1`
+- `POST /api/serial/raw`
 - `GET|POST /api/tracking/config`
-- `GET /api/serial/ports`
 - `POST /api/sequences/save`
 - `GET /api/sequences/list`
 - `GET /api/sequences/load?label=<label>&name=<name>`
