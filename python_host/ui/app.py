@@ -13,6 +13,8 @@ import time
 
 from flask import Flask, render_template, Response, request, jsonify
 
+from python_host.network.coordinate_publisher import CoordinatePublisher
+from python_host.network.serial_sender import SerialCoordinateSender
 from python_host.network.node_discovery import (
     discover_mdns_nodes,
     discover_nodes_via_gateway,
@@ -32,6 +34,7 @@ app = Flask(
 
 tracker = FaceTracker(camera_index=0)
 osc = OSCSender()
+serial_sender = SerialCoordinateSender()
 registry = load_registry()
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -46,6 +49,13 @@ _camera_index = 0
 _devices_lock = threading.Lock()
 _devices = {}
 _selected_device = None
+
+tracking_publisher = CoordinatePublisher(
+    get_primary_target=lambda: tracker.get_primary_target(),
+    get_selected_target=lambda: _selected_target(),
+    osc_sender=osc,
+    serial_sender=serial_sender,
+)
 
 
 def _device_label(device):
@@ -394,6 +404,51 @@ def api_osc_stop():
     return jsonify({"status": "ok"})
 
 
+@app.route("/api/serial/ports")
+def api_serial_ports():
+    return jsonify({"ports": serial_sender.list_ports(), "serial": serial_sender.status()})
+
+
+@app.route("/api/tracking/config", methods=["GET", "POST"])
+def api_tracking_config():
+    if request.method == "POST":
+        payload = request.json or {}
+
+        tracking_publisher.update_config(
+            enabled=payload.get("enabled") if "enabled" in payload else None,
+            transport=payload.get("transport") if "transport" in payload else None,
+            rate_hz=payload.get("rate_hz") if "rate_hz" in payload else None,
+            deadband=payload.get("deadband") if "deadband" in payload else None,
+            frame_width=payload.get("frame_width") if "frame_width" in payload else None,
+            frame_height=payload.get("frame_height") if "frame_height" in payload else None,
+        )
+
+        # Keep node-side auto mode aligned with panel toggle.
+        if "enabled" in payload:
+            target = _selected_target()
+            if target:
+                osc.send_raw(target, "/track/auto", [1 if payload.get("enabled") else 0], source="manual")
+
+        serial_port = payload.get("serial_port") if "serial_port" in payload else None
+        serial_baud = payload.get("serial_baud") if "serial_baud" in payload else None
+        if serial_port is not None or serial_baud is not None:
+            serial_sender.configure(port=serial_port, baud=serial_baud)
+
+        if payload.get("serial_connect"):
+            serial_sender.connect()
+        if payload.get("serial_disconnect"):
+            serial_sender.disconnect()
+
+    return jsonify(
+        {
+            "status": "ok",
+            "tracking": tracking_publisher.snapshot(),
+            "serial": serial_sender.status(),
+            "selected_target": _selected_target(),
+        }
+    )
+
+
 # ── Override toggle ──────────────────────────────────────────
 
 
@@ -525,6 +580,8 @@ def create_app(camera_index=0, esp32_targets=None):
     tracker = FaceTracker(camera_index=camera_index)
     _camera_index = int(camera_index)
     _camera_running = False
+    tracking_publisher.update_config(enabled=False, transport="osc")
+    serial_sender.disconnect()
     if esp32_targets:
         for name, (ip, port) in esp32_targets.items():
             _register_device({"name": name, "ip": ip, "port": port, "source": "bootstrap"})

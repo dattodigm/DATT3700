@@ -162,6 +162,9 @@ class OSCSender:
     def send_auto_mode(self, target_name, on, source="manual"):
         self.send(target_name, "/auto", int(on), source=source)
 
+    def send_track_norm(self, target_name, norm_x, norm_y, source="auto"):
+        self.send(target_name, "/track/norm", float(norm_x), float(norm_y), source=source)
+
     def stop_all(self, target_name):
         """Emergency stop — always sent regardless of override."""
         self.send(target_name, "/preset", 3, source="manual")

@@ -7,6 +7,8 @@ Flask control panel for DATT3700 multi-node ESP32 setup.
 - mDNS scan for ESP32 nodes (`_datt_flower._tcp`, `_osc._udp`)
 - Gateway fallback scan via OSC (`/info/clients`, `/info/self`)
 - Node-type-aware control rendering for `sylvie`, `sue`, `kait`, `face_track`
+- Face-tracking coordinate publisher with transport switch (`OSC / Wi-Fi` or `USB serial`)
+- Face-tracking panel actions: auto tracking ON/OFF, transport config, serial port connect
 - Offline node-type tabs for UI debugging without hardware
 - Universal raw OSC console with send/receive history
 - Motion sequence recorder with label folders (`data/sequences/<label>`)
@@ -27,6 +29,8 @@ Open `http://127.0.0.1:15000`.
 - `POST /api/devices/select`
 - `POST /api/osc/raw`
 - `GET /api/osc/history`
+- `GET|POST /api/tracking/config`
+- `GET /api/serial/ports`
 - `POST /api/sequences/save`
 - `GET /api/sequences/list`
 - `GET /api/sequences/load?label=<label>&name=<name>`

@@ -118,3 +118,12 @@ class TestOSCSender:
         sender = OSCSender()
         # Should not raise
         sender.send_eye_animation("test", 0)
+
+    def test_send_track_norm(self):
+        sender = OSCSender()
+        mock_client = MagicMock()
+        sender._clients["test"] = mock_client
+        sender._target_info["test"] = ("127.0.0.1", 8888)
+
+        sender.send_track_norm("test", 0.25, 0.75, source="manual")
+        mock_client.send_message.assert_called_once_with("/track/norm", [0.25, 0.75])

@@ -227,3 +227,28 @@ class TestFlaskAPI:
 
         monkeypatch.setattr(app_module, "SEQUENCES_DIR", original_dir)
 
+    def test_api_tracking_config_get(self, client):
+        resp = client.get("/api/tracking/config")
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "ok"
+        assert "tracking" in data
+        assert "serial" in data
+
+    def test_api_tracking_config_post(self, client):
+        resp = client.post(
+            "/api/tracking/config",
+            data=json.dumps({"enabled": True, "transport": "osc", "rate_hz": 15}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["tracking"]["enabled"] is True
+        assert data["tracking"]["transport"] == "osc"
+
+    def test_api_serial_ports(self, client):
+        resp = client.get("/api/serial/ports")
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert "ports" in data
+        assert "serial" in data

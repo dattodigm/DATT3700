@@ -99,6 +99,7 @@
   let recordStartMs = 0;
   let recordedEvents = [];
   let loadedSequence = null;
+  let trackingState = null;
 
   async function getJSON(url) {
     const r = await fetch(url);
@@ -287,12 +288,43 @@
       `).join('');
 
       holder.innerHTML = `
-        <div class="flex gap-2 flex-wrap">
-          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[1])">Auto Track ON</button>
-          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/track/auto',[0])">Auto Track OFF</button>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Auto Tracking</div>
+            <div class="flex gap-2">
+              <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">ON</button>
+              <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="setTrackingEnabled(false)">OFF</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
+            </div>
+          </div>
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Coordinate Transport</div>
+            <div class="flex gap-2 items-center">
+              <select id="trackTransport" class="bg-slate-700 rounded px-2 py-1 text-sm">
+                <option value="osc">OSC / Wi-Fi</option>
+                <option value="serial">USB Serial</option>
+              </select>
+              <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="applyTrackingTransport()">Apply</button>
+            </div>
+          </div>
         </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <label class="text-xs text-slate-300">Serial Port
+            <select id="serialPortSelect" class="bg-slate-700 rounded px-2 py-1 text-sm w-full"></select>
+          </label>
+          <label class="text-xs text-slate-300">Baud
+            <input id="serialBaud" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="115200">
+          </label>
+          <button class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm" onclick="refreshSerialPorts()">Refresh Ports</button>
+          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm" onclick="connectSerialNow()">Connect Serial</button>
+        </div>
+
+        <div id="trackStatus" class="text-xs text-slate-400">Tracking status loading...</div>
         ${groups}
       `;
+
+      refreshTrackingUI();
       return;
     }
 
@@ -419,31 +451,78 @@
     await sendRaw(`/flower${idx}`, [pan, tilt]);
   }
 
-  async function scan(mode) {
-    const gateway_ip = document.getElementById('gatewayIP').value;
-    const gateway_port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
-    const data = await postJSON('/api/devices/scan', { mode, gateway_ip, gateway_port });
-    devices = data.devices || [];
-    selected = data.selected || selected;
-    renderDeviceList();
-    renderControls();
+  async function getTrackingConfig() {
+    trackingState = await getJSON('/api/tracking/config');
+    return trackingState;
   }
 
-  async function refreshDevices() {
-    const data = await getJSON('/api/devices');
-    devices = data.devices || [];
-    selected = data.selected || selected;
-    renderDeviceList();
-    renderControls();
-  }
+  async function refreshSerialPorts() {
+    const data = await getJSON('/api/serial/ports');
+    const sel = document.getElementById('serialPortSelect');
+    if (!sel) return;
 
-  async function refreshHistory() {
-    const data = await getJSON('/api/osc/history?limit=30');
-    const items = (data.items || []).map((item) => {
-      const dt = new Date(item.ts * 1000).toLocaleTimeString();
-      return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
+    const selectedPort = (trackingState && trackingState.serial && trackingState.serial.port) || '';
+    sel.innerHTML = '<option value="">-- select port --</option>';
+    (data.ports || []).forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = p.device;
+      opt.textContent = `${p.device} ${p.description ? `(${p.description})` : ''}`;
+      if (p.device === selectedPort) opt.selected = true;
+      sel.appendChild(opt);
     });
-    document.getElementById('oscLog').textContent = items.join('\n');
+  }
+
+  function renderTrackingStatus() {
+    const el = document.getElementById('trackStatus');
+    if (!el || !trackingState) return;
+
+    const t = trackingState.tracking || {};
+    const s = trackingState.serial || {};
+    const targetText = trackingState.selected_target || '-';
+    const connected = s.connected ? 'connected' : 'disconnected';
+    el.textContent = `auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
+
+    const transportSel = document.getElementById('trackTransport');
+    if (transportSel && t.transport) transportSel.value = t.transport;
+
+    const baudInput = document.getElementById('serialBaud');
+    if (baudInput && s.baud) baudInput.value = s.baud;
+  }
+
+  async function refreshTrackingUI() {
+    await getTrackingConfig();
+    await refreshSerialPorts();
+    renderTrackingStatus();
+  }
+
+  async function setTrackingEnabled(on) {
+    await postJSON('/api/tracking/config', { enabled: !!on });
+    await refreshTrackingUI();
+  }
+
+  async function applyTrackingTransport() {
+    const transportEl = document.getElementById('trackTransport');
+    const portEl = document.getElementById('serialPortSelect');
+    const baudEl = document.getElementById('serialBaud');
+
+    const payload = {
+      transport: transportEl ? transportEl.value : 'osc',
+      serial_port: portEl ? portEl.value : '',
+      serial_baud: baudEl ? parseInt(baudEl.value || '115200', 10) : 115200,
+    };
+    await postJSON('/api/tracking/config', payload);
+    await refreshTrackingUI();
+  }
+
+  async function connectSerialNow() {
+    const portEl = document.getElementById('serialPortSelect');
+    const baudEl = document.getElementById('serialBaud');
+    await postJSON('/api/tracking/config', {
+      serial_port: portEl ? portEl.value : '',
+      serial_baud: baudEl ? parseInt(baudEl.value || '115200', 10) : 115200,
+      serial_connect: true,
+    });
+    await refreshTrackingUI();
   }
 
   async function init() {
@@ -529,6 +608,7 @@
     renderTabs();
     await loadSequences();
     await refreshHistory();
+    await getTrackingConfig();
   }
 
   init();
