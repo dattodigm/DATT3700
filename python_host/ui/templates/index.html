@@ -29,6 +29,71 @@
         </div>
         <h2 class="text-sm font-semibold text-slate-400 mb-2">Primary Face</h2>
         <div id="faceInfo" class="font-mono text-slate-300">Camera is off</div>
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-slate-400">Flower Emotion</span>
+            <span id="flowerEmotionSource" class="text-slate-500">source: -</span>
+          </div>
+          <div class="mt-1 flex items-center justify-between">
+            <span id="flowerEmotionBadge" class="inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold bg-slate-700 text-slate-100">REST .</span>
+            <span id="flowerEmotionStability" class="text-xs text-slate-400">0%</span>
+          </div>
+          <div class="mt-2 h-2 w-full rounded bg-slate-700 overflow-hidden">
+            <div id="flowerEmotionBar" class="h-2 bg-slate-400" style="width:0%"></div>
+          </div>
+        </div>
+
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between text-xs mb-2">
+            <span class="text-slate-400">Real-Time Emotion Analysis Table</span>
+            <span id="emotionModelTag" class="text-slate-500">model: -</span>
+          </div>
+          <div class="overflow-x-auto max-h-40">
+            <table class="w-full text-xs">
+              <thead class="text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th class="text-left py-1 pr-2">Emotion</th>
+                  <th class="text-right py-1 pr-2">Score</th>
+                  <th class="text-left py-1">Bar</th>
+                </tr>
+              </thead>
+              <tbody id="emotionTableBody" class="text-slate-300"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-slate-400">Emotion Reactor Tuning</span>
+            <span id="reactorConfigStatus" class="text-xs text-slate-500">runtime</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+            <label class="text-slate-300">Enter Threshold <span id="reactorEnterVal" class="text-slate-500"></span>
+              <input id="reactorEnter" type="range" min="0.6" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Exit Threshold <span id="reactorExitVal" class="text-slate-500"></span>
+              <input id="reactorExit" type="range" min="0.2" max="2.5" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Decay <span id="reactorDecayVal" class="text-slate-500"></span>
+              <input id="reactorDecay" type="range" min="0.65" max="0.99" step="0.005" class="w-full">
+            </label>
+            <label class="text-slate-300">Shock Scale <span id="reactorShockVal" class="text-slate-500"></span>
+              <input id="reactorShock" type="range" min="0" max="5" step="0.1" class="w-full">
+            </label>
+            <label class="text-slate-300">Bloom Gain <span id="reactorBloomVal" class="text-slate-500"></span>
+              <input id="reactorBloom" type="range" min="0.4" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Alert Gain <span id="reactorAlertVal" class="text-slate-500"></span>
+              <input id="reactorAlert" type="range" min="0.4" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Soothe Gain <span id="reactorSootheVal" class="text-slate-500"></span>
+              <input id="reactorSoothe" type="range" min="0.3" max="2.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Soothe Hold ms <span id="reactorHoldSootheVal" class="text-slate-500"></span>
+              <input id="reactorHoldSoothe" type="range" min="200" max="3500" step="50" class="w-full">
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
@@ -110,6 +175,8 @@
   let lastMotorSendAt = { 1: 0, 2: 0 };
   let suePadState = { motionActive: false, ledActive: false };
   let lastSueSendAt = { motion: 0, led: 0 };
+  let reactorConfigTimer = null;
+  let reactorConfigLoaded = false;
   const SYLVIE_DEADBAND = 20;
   const SYLVIE_MIN_EFFECTIVE = 150;
   const SYLVIE_SEND_INTERVAL_MS = 40;
@@ -185,6 +252,171 @@
     document.getElementById('videoFeed').src = running ? `/video_feed?ts=${Date.now()}` : '';
     if (!running) {
       document.getElementById('faceInfo').textContent = 'Camera is off';
+      renderReactorStatus(null, false);
+    }
+  }
+
+  function reactorViewModel(flowerEmotion) {
+    const state = (flowerEmotion || 'REST').toUpperCase();
+    const styles = {
+      BLOOM: { emoji: '🌸', badge: 'bg-amber-600 text-amber-50', bar: 'bg-amber-500' },
+      ALERT: { emoji: '⚠️', badge: 'bg-rose-700 text-rose-50', bar: 'bg-rose-500' },
+      SOOTHE: { emoji: '🍃', badge: 'bg-emerald-700 text-emerald-50', bar: 'bg-emerald-500' },
+      REST: { emoji: '💤', badge: 'bg-slate-700 text-slate-100', bar: 'bg-slate-400' },
+    };
+    return { state, ...(styles[state] || styles.REST) };
+  }
+
+  function renderReactorStatus(reactor, cameraRunning) {
+    const badge = document.getElementById('flowerEmotionBadge');
+    const source = document.getElementById('flowerEmotionSource');
+    const stab = document.getElementById('flowerEmotionStability');
+    const bar = document.getElementById('flowerEmotionBar');
+
+    if (!cameraRunning || !reactor) {
+      const vm = reactorViewModel('REST');
+      badge.className = `inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold ${vm.badge}`;
+      badge.textContent = `${vm.state} ${vm.emoji}`;
+      source.textContent = 'source: camera off';
+      stab.textContent = '0%';
+      bar.className = `h-2 ${vm.bar}`;
+      bar.style.width = '0%';
+      return;
+    }
+
+    const vm = reactorViewModel(reactor.flower_emotion);
+    badge.className = `inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold ${vm.badge}`;
+    badge.textContent = `${vm.state} ${vm.emoji}`;
+
+    const srcEmotion = reactor.source_emotion || '-';
+    const srcConf = Number(reactor.source_confidence || 0);
+    source.textContent = `source: ${srcEmotion} (${srcConf.toFixed(2)})`;
+
+    const stability = Math.max(0, Math.min(100, Number(reactor.stability || 0)));
+    stab.textContent = `${stability.toFixed(0)}%`;
+    bar.className = `h-2 ${vm.bar}`;
+    bar.style.width = `${stability}%`;
+  }
+
+  function renderEmotionTable(perception, reactor) {
+    const tbody = document.getElementById('emotionTableBody');
+    const modelTag = document.getElementById('emotionModelTag');
+    if (!tbody || !modelTag) return;
+
+    let rows = [];
+    let sourceModel = reactor && reactor.source_model ? reactor.source_model : '-';
+    if (perception && perception.vit_emotion && Array.isArray(perception.vit_emotion.scores)) {
+      const classes = Array.isArray(perception.vit_emotion.classes) ? perception.vit_emotion.classes : [];
+      rows = perception.vit_emotion.scores.map((score, idx) => ({
+        emotion: classes[idx] || `e${idx}`,
+        score: Number(score || 0),
+      }));
+      sourceModel = 'vit';
+    } else if (perception && perception.emotion && perception.emotion.scores) {
+      rows = Object.entries(perception.emotion.scores).map(([emotion, score]) => ({
+        emotion,
+        score: Number(score || 0) > 1 ? Number(score || 0) / 100.0 : Number(score || 0),
+      }));
+      sourceModel = 'deepface';
+    }
+
+    rows.sort((a, b) => b.score - a.score);
+    if (!rows.length) {
+      modelTag.textContent = `model: ${sourceModel}`;
+      tbody.innerHTML = '<tr><td colspan="3" class="py-2 text-slate-500">No emotion scores yet</td></tr>';
+      return;
+    }
+
+    modelTag.textContent = `model: ${sourceModel}`;
+    tbody.innerHTML = rows.map((item) => {
+      const pct = Math.max(0, Math.min(100, item.score * 100));
+      return `
+        <tr class="border-b border-slate-800">
+          <td class="py-1 pr-2">${item.emotion}</td>
+          <td class="py-1 pr-2 text-right">${pct.toFixed(1)}%</td>
+          <td class="py-1">
+            <div class="h-2 bg-slate-700 rounded overflow-hidden">
+              <div class="h-2 bg-sky-500" style="width:${pct.toFixed(1)}%"></div>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function setReactorSliderValue(id, value, digits = 2) {
+    const input = document.getElementById(id);
+    const label = document.getElementById(`${id}Val`);
+    if (!input || !label || value === undefined || value === null) return;
+    input.value = String(value);
+    label.textContent = Number(value).toFixed(digits);
+  }
+
+  function renderReactorSliderLabels() {
+    const fields = [
+      ['reactorEnter', 2], ['reactorExit', 2], ['reactorDecay', 3], ['reactorShock', 2],
+      ['reactorBloom', 2], ['reactorAlert', 2], ['reactorSoothe', 2], ['reactorHoldSoothe', 0],
+    ];
+    fields.forEach(([id, digits]) => {
+      const input = document.getElementById(id);
+      const label = document.getElementById(`${id}Val`);
+      if (input && label) label.textContent = Number(input.value).toFixed(digits);
+    });
+  }
+
+  function collectReactorConfigFromUI() {
+    return {
+      enter_th: Number(document.getElementById('reactorEnter').value),
+      exit_th: Number(document.getElementById('reactorExit').value),
+      decay: Number(document.getElementById('reactorDecay').value),
+      shock_scale: Number(document.getElementById('reactorShock').value),
+      bloom_gain: Number(document.getElementById('reactorBloom').value),
+      alert_gain: Number(document.getElementById('reactorAlert').value),
+      soothe_gain: Number(document.getElementById('reactorSoothe').value),
+      hold_soothe_ms: Number(document.getElementById('reactorHoldSoothe').value),
+    };
+  }
+
+  async function pushReactorConfig() {
+    const status = document.getElementById('reactorConfigStatus');
+    try {
+      status.textContent = 'updating...';
+      await postJSON('/api/reactor/config', collectReactorConfigFromUI());
+      status.textContent = 'runtime (synced)';
+    } catch (e) {
+      status.textContent = 'update failed';
+    }
+  }
+
+  function scheduleReactorConfigPush() {
+    renderReactorSliderLabels();
+    if (!reactorConfigLoaded) return;
+    if (reactorConfigTimer) clearTimeout(reactorConfigTimer);
+    reactorConfigTimer = setTimeout(pushReactorConfig, 150);
+  }
+
+  async function loadReactorConfig() {
+    try {
+      const data = await getJSON('/api/reactor/config');
+      const cfg = data && data.config ? data.config : {};
+      setReactorSliderValue('reactorEnter', cfg.enter_th, 2);
+      setReactorSliderValue('reactorExit', cfg.exit_th, 2);
+      setReactorSliderValue('reactorDecay', cfg.decay, 3);
+      setReactorSliderValue('reactorShock', cfg.shock_scale, 2);
+      setReactorSliderValue('reactorBloom', cfg.bloom_gain, 2);
+      setReactorSliderValue('reactorAlert', cfg.alert_gain, 2);
+      setReactorSliderValue('reactorSoothe', cfg.soothe_gain, 2);
+      setReactorSliderValue('reactorHoldSoothe', cfg.hold_soothe_ms, 0);
+
+      ['reactorEnter', 'reactorExit', 'reactorDecay', 'reactorShock', 'reactorBloom', 'reactorAlert', 'reactorSoothe', 'reactorHoldSoothe']
+        .forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.oninput = scheduleReactorConfigPush;
+        });
+      reactorConfigLoaded = true;
+      renderReactorSliderLabels();
+    } catch (e) {
+      document.getElementById('reactorConfigStatus').textContent = 'runtime (offline)';
     }
   }
 
@@ -964,6 +1196,8 @@
           const el = document.getElementById('faceInfo');
           if (!data.camera_running) {
             el.textContent = 'Camera is off';
+            renderReactorStatus(data.reactor, false);
+            renderEmotionTable(data.perception, data.reactor);
             return;
           }
           if (data.primary) {
@@ -971,12 +1205,15 @@
           } else {
             el.textContent = 'No face detected';
           }
+          renderReactorStatus(data.reactor, true);
+          renderEmotionTable(data.perception, data.reactor);
         } catch (e) {
           // keep silent
         }
       }, 600);
 
       await loadCameraList();
+      await loadReactorConfig();
       await refreshCameraState();
       await refreshDevices();
       renderTabs();

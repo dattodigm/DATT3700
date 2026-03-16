@@ -16,6 +16,7 @@ class TestPerceptionModule:
         assert results["emotion"] is None
         assert results["pose"] is None
         assert results["face_analysis"] is None
+        assert results["vit_emotion"] is None
 
     def test_lazy_load_mediapipe(self):
         """MediaPipe loading should not crash even if not installed."""
@@ -28,6 +29,12 @@ class TestPerceptionModule:
         """DeepFace loading should not crash even if not installed."""
         pm = PerceptionModule()
         result = pm._try_load_deepface()
+        assert isinstance(result, bool)
+
+    def test_lazy_load_vit(self):
+        """ViT loading should not crash even when model/deps are unavailable."""
+        pm = PerceptionModule()
+        result = pm._try_load_vit()
         assert isinstance(result, bool)
 
     def test_stop_before_start(self):

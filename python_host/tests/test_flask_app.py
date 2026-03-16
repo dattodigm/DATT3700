@@ -26,8 +26,11 @@ class TestFlaskAPI:
         resp = client.get("/api/faces")
         assert resp.status_code == 200
         data = json.loads(resp.data)
+        assert "camera_running" in data
         assert "primary" in data
         assert "faces" in data
+        assert "perception" in data
+        assert "reactor" in data
 
     def test_api_override_get(self, client):
         resp = client.get("/api/override")
@@ -97,6 +100,27 @@ class TestFlaskAPI:
         data = json.loads(resp.data)
         assert "mediapipe" in data
         assert "deepface" in data
+        assert "vit" in data
+
+    def test_api_reactor_config_get_post(self, client):
+        got = client.get("/api/reactor/config")
+        assert got.status_code == 200
+        got_data = json.loads(got.data)
+        assert got_data["status"] == "ok"
+        assert "config" in got_data
+        assert "enter_th" in got_data["config"]
+
+        upd = client.post(
+            "/api/reactor/config",
+            data=json.dumps({"enter_th": 1.4, "alert_gain": 2.1, "hold_soothe_ms": 2100}),
+            content_type="application/json",
+        )
+        assert upd.status_code == 200
+        upd_data = json.loads(upd.data)
+        assert upd_data["status"] == "ok"
+        assert abs(upd_data["config"]["enter_th"] - 1.4) < 1e-6
+        assert abs(upd_data["config"]["alert_gain"] - 2.1) < 1e-6
+        assert int(upd_data["config"]["hold_soothe_ms"]) == 2100
 
     def test_api_eye_animation_stub(self, client):
         resp = client.post(

@@ -27,6 +27,7 @@ class PerceptionModule:
             "emotion": None,       # e.g. {"dominant": "happy", "scores": {...}}
             "pose": None,         # e.g. {"landmarks": [...], "gesture": "..."}
             "face_analysis": None,  # e.g. {"age": 25, "gender": "Man", ...}
+            "vit_emotion": None,  # e.g. {"dominant": "happy", "scores": [...], "confidence": 0.83}
         }
         self._running = False
         self._tracker = None
@@ -36,6 +37,7 @@ class PerceptionModule:
         self._deepface = None
         self._mp_face_mesh = None
         self._mp_pose = None
+        self._vit_detector = None
 
     # ------------------------------------------------------------------
     # Init
@@ -45,7 +47,10 @@ class PerceptionModule:
         try:
             import mediapipe as mp
             self._mp = mp
-            # Use new Tasks API (mediapipe >= 0.10.14)
+            if not hasattr(mp, "solutions"):
+                logger.warning("MediaPipe installed without solutions API — pose/mesh disabled")
+                return False
+
             self._mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
                 static_image_mode=False,
                 max_num_faces=1,
@@ -64,6 +69,9 @@ class PerceptionModule:
         except ImportError:
             logger.warning("MediaPipe not installed — pose/mesh disabled")
             return False
+        except Exception as exc:
+            logger.warning("MediaPipe loading error: %s — pose/mesh disabled", exc)
+            return False
 
     def _try_load_deepface(self):
         try:
@@ -75,6 +83,24 @@ class PerceptionModule:
             logger.warning("DeepFace not installed — emotion analysis disabled")
             return False
 
+    def _try_load_vit(self):
+        try:
+            from .vit_emotion import ViTEmotionDetector
+
+            self._vit_detector = ViTEmotionDetector()
+            if self._vit_detector.load_model():
+                logger.info("ViT emotion detector initialized")
+                return True
+
+            logger.warning("ViT model failed to load")
+            return False
+        except ImportError as exc:
+            logger.warning("ViT detector not available: %s", exc)
+            return False
+        except Exception as exc:
+            logger.warning("ViT detector error: %s", exc)
+            return False
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -84,6 +110,7 @@ class PerceptionModule:
         self._tracker = tracker
         self._try_load_mediapipe()
         self._try_load_deepface()
+        self._try_load_vit()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -175,6 +202,26 @@ class PerceptionModule:
                         }
                 except Exception as e:
                     logger.debug(f"DeepFace error: {e}")
+
+            # ── ViT emotion analysis (uses primary tracked face ROI when available) ──
+            if self._vit_detector:
+                try:
+                    faces = self._tracker.get_all_faces()
+                    face_bbox = None
+                    if faces:
+                        primary = max(faces, key=lambda f: f["weight"])
+                        face_bbox = (primary["x"], primary["y"], primary["w"], primary["h"])
+
+                    vit_result = self._vit_detector.predict(frame, face_bbox)
+                    if vit_result:
+                        results["vit_emotion"] = {
+                            "dominant": vit_result["dominant"],
+                            "scores": vit_result["scores"],
+                            "confidence": vit_result["confidence"],
+                            "classes": self._vit_detector.EMOTION_CLASSES,
+                        }
+                except Exception as e:
+                    logger.debug(f"ViT prediction error: {e}")
 
             with self._lock:
                 self._results.update(results)

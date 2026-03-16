@@ -23,6 +23,8 @@ from python_host.network.node_discovery import (
 )
 from python_host.network.osc_sender import OSCSender
 from python_host.vision.face_tracker import FaceTracker
+from python_host.vision.perception import PerceptionModule
+from python_host.vision.emotion_reactor import EmotionReactor
 
 # ── Globals ──────────────────────────────────────────────────
 
@@ -50,12 +52,34 @@ _devices_lock = threading.Lock()
 _devices = {}
 _selected_device = None
 
+
+def _jsonable(obj):
+    """Convert numpy-heavy payloads into plain Python values for jsonify."""
+    try:
+        import numpy as np
+    except Exception:
+        np = None
+
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_jsonable(v) for v in obj]
+    if np is not None:
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.generic):
+            return obj.item()
+    return str(obj)
+
 tracking_publisher = CoordinatePublisher(
     get_primary_target=lambda: tracker.get_primary_target(),
     get_selected_target=lambda: _selected_target(),
     osc_sender=osc,
     serial_sender=serial_sender,
 )
+perception = PerceptionModule()
 
 
 def _device_label(device):
@@ -96,6 +120,20 @@ def _selected_target(fallback=None):
         return _selected_device
 
 
+def _selected_node_type():
+    with _devices_lock:
+        if _selected_device and _selected_device in _devices:
+            return _devices[_selected_device].get("node_type", "unknown")
+    return "unknown"
+
+
+emotion_reactor = EmotionReactor(
+    osc_sender=osc,
+    get_selected_target=lambda: _selected_target(),
+    get_selected_node_type=lambda: _selected_node_type(),
+)
+
+
 def _safe_token(value, fallback):
     value = (value or "").strip()
     if not value:
@@ -131,9 +169,12 @@ def _start_camera(index=None):
             return True, "already_running"
         try:
             tracker.start()
+            perception.start(tracker)
+            emotion_reactor.reset()
             _camera_running = True
             return True, "started"
         except RuntimeError as exc:
+            perception.stop()
             _camera_running = False
             return False, str(exc)
 
@@ -143,6 +184,8 @@ def _stop_camera():
     with _camera_lock:
         if _camera_running:
             tracker.stop()
+        perception.stop()
+        emotion_reactor.reset()
         _camera_running = False
 
 
@@ -193,11 +236,30 @@ def api_faces():
     with _camera_lock:
         running = _camera_running
     if not running:
-        return jsonify({"camera_running": False, "primary": None, "faces": []})
+        return jsonify(
+            {
+                "camera_running": False,
+                "primary": None,
+                "faces": [],
+                "perception": _jsonable(perception.get_results()),
+                "reactor": emotion_reactor.snapshot(has_face=False),
+            }
+        )
 
     target = tracker.get_primary_target()
     faces = tracker.get_all_faces()
-    return jsonify({"camera_running": True, "primary": target, "faces": faces})
+    has_face = bool(faces)
+    perception_data = perception.get_results()
+    reactor = emotion_reactor.update(perception_data, has_face=has_face)
+    return jsonify(
+        {
+            "camera_running": True,
+            "primary": _jsonable(target),
+            "faces": _jsonable(faces),
+            "perception": _jsonable(perception_data),
+            "reactor": _jsonable(reactor),
+        }
+    )
 
 
 # ── Camera switching ─────────────────────────────────────────
@@ -493,6 +555,16 @@ def api_tracking_config():
     )
 
 
+@app.route("/api/reactor/config", methods=["GET", "POST"])
+def api_reactor_config():
+    if request.method == "POST":
+        payload = request.json or {}
+        config = emotion_reactor.update_config(payload)
+        return jsonify({"status": "ok", "config": config})
+
+    return jsonify({"status": "ok", "config": emotion_reactor.get_config()})
+
+
 # ── Override toggle ──────────────────────────────────────────
 
 
@@ -601,7 +673,7 @@ def api_eye_animation():
 @app.route("/api/perception/status")
 def api_perception_status():
     """Check which perception modules are available."""
-    modules = {"mediapipe": False, "deepface": False}
+    modules = {"mediapipe": False, "deepface": False, "vit": False}
     try:
         import mediapipe  # noqa: F401
         modules["mediapipe"] = True
@@ -610,6 +682,11 @@ def api_perception_status():
     try:
         from deepface import DeepFace  # noqa: F401
         modules["deepface"] = True
+    except ImportError:
+        pass
+    try:
+        from python_host.vision.vit_emotion import ViTEmotionDetector  # noqa: F401
+        modules["vit"] = True
     except ImportError:
         pass
     return jsonify(modules)
@@ -624,6 +701,8 @@ def create_app(camera_index=0, esp32_targets=None):
     tracker = FaceTracker(camera_index=camera_index)
     _camera_index = int(camera_index)
     _camera_running = False
+    perception.stop()
+    emotion_reactor.reset()
     tracking_publisher.update_config(enabled=False, transport="osc")
     serial_sender.disconnect()
     if esp32_targets:
