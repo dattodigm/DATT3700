@@ -21,7 +21,7 @@ const char* STA_SSID     = "F7OWER";
 const char* STA_PASSWORD = "12345678";
 
 // --- mDNS 设备广播名称（局域网内可用 sylvie.local 访问）---
-const char* MDNS_NAME = "F7OWER_00";
+const char* MDNS_NAME = "sylvie";
 
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;

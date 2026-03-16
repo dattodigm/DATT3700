@@ -36,6 +36,7 @@ registry = load_registry()
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 SAMPLES_FILE = os.path.join(DATA_DIR, "training_samples.jsonl")
+SEQUENCES_DIR = os.path.join(DATA_DIR, "sequences")
 
 # Camera lifecycle state: keep camera disabled until user starts it.
 _camera_lock = threading.Lock()
@@ -83,6 +84,26 @@ def _selected_target(fallback=None):
         return fallback
     with _devices_lock:
         return _selected_device
+
+
+def _safe_token(value, fallback):
+    value = (value or "").strip()
+    if not value:
+        return fallback
+    cleaned = []
+    for ch in value:
+        if ch.isalnum() or ch in ("_", "-"):
+            cleaned.append(ch)
+        else:
+            cleaned.append("_")
+    return "".join(cleaned) or fallback
+
+
+def _sequence_path(label, name):
+    safe_label = _safe_token(label, "unlabeled")
+    safe_name = _safe_token(name, "sequence")
+    folder = os.path.join(SEQUENCES_DIR, safe_label)
+    return folder, os.path.join(folder, f"{safe_name}.json")
 
 
 def _set_camera_index(index):
@@ -175,6 +196,19 @@ def api_faces():
 @app.route("/api/cameras")
 def api_cameras():
     return jsonify({"cameras": FaceTracker.list_cameras()})
+    # """Return camera indices.
+    #
+    # By default this avoids probing hardware (which can wake camera on macOS).
+    # Use /api/cameras?probe=1&max=2 when you explicitly want a scan.
+    # """
+    # probe = str(request.args.get("probe", "0")).lower() in ("1", "true", "yes")
+    # if probe:
+    #     max_check = int(request.args.get("max", 2))
+    #     cameras = FaceTracker.list_cameras(max_check=max_check)
+    #     return jsonify({"cameras": cameras})
+    #
+    # cameras = sorted(set([0, _camera_index]))
+    # return jsonify({"cameras": cameras})
 
 
 @app.route("/api/camera/state")
@@ -387,6 +421,67 @@ def api_tag_save():
     with open(SAMPLES_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(sample) + "\n")
     return jsonify({"status": "saved", "sample": sample})
+
+
+@app.route("/api/sequences/list")
+def api_sequences_list():
+    """List saved motion sequences grouped by label."""
+    if not os.path.exists(SEQUENCES_DIR):
+        return jsonify({"labels": {}, "items": []})
+
+    labels = {}
+    items = []
+    for label in sorted(os.listdir(SEQUENCES_DIR)):
+        label_dir = os.path.join(SEQUENCES_DIR, label)
+        if not os.path.isdir(label_dir):
+            continue
+        names = []
+        for fname in sorted(os.listdir(label_dir)):
+            if not fname.endswith(".json"):
+                continue
+            name = os.path.splitext(fname)[0]
+            names.append(name)
+            items.append({"label": label, "name": name})
+        labels[label] = names
+
+    return jsonify({"labels": labels, "items": items})
+
+
+@app.route("/api/sequences/load")
+def api_sequences_load():
+    label = request.args.get("label", "unlabeled")
+    name = request.args.get("name", "sequence")
+    folder, file_path = _sequence_path(label, name)
+    if not os.path.exists(file_path):
+        return jsonify({"status": "error", "message": "sequence not found"}), 404
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return jsonify({"status": "ok", "sequence": payload})
+
+
+@app.route("/api/sequences/save", methods=["POST"])
+def api_sequences_save():
+    payload = request.json or {}
+    label = payload.get("label", "unlabeled")
+    name = payload.get("name", "sequence")
+    node_type = payload.get("node_type", "unknown")
+    events = payload.get("events", [])
+
+    folder, file_path = _sequence_path(label, name)
+    os.makedirs(folder, exist_ok=True)
+
+    data = {
+        "label": label,
+        "name": name,
+        "node_type": node_type,
+        "created_at": time.time(),
+        "events": events,
+    }
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=True, indent=2)
+
+    return jsonify({"status": "ok", "path": file_path})
 
 
 # ── TFT eye animation stub ──────────────────────────────────

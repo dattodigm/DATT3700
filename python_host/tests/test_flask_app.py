@@ -197,3 +197,33 @@ class TestFlaskAPI:
             content_type="application/json",
         )
         assert stop.status_code == 200
+
+    def test_api_sequences_save_list_load(self, client, tmp_path, monkeypatch):
+        original_dir = app_module.SEQUENCES_DIR
+        monkeypatch.setattr(app_module, "SEQUENCES_DIR", str(tmp_path))
+
+        payload = {
+            "label": "calm",
+            "name": "demo",
+            "node_type": "sylvie",
+            "events": [{"t": 0.0, "address": "/auto", "args": [0]}],
+        }
+        resp = client.post(
+            "/api/sequences/save",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+
+        listing = client.get("/api/sequences/list")
+        assert listing.status_code == 200
+        listing_data = json.loads(listing.data)
+        assert "calm" in listing_data.get("labels", {})
+
+        loaded = client.get("/api/sequences/load?label=calm&name=demo")
+        assert loaded.status_code == 200
+        loaded_data = json.loads(loaded.data)
+        assert loaded_data["sequence"]["name"] == "demo"
+
+        monkeypatch.setattr(app_module, "SEQUENCES_DIR", original_dir)
+

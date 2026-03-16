@@ -21,7 +21,7 @@
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-slate-400 mb-2">Camera</h2>
         <div class="flex flex-wrap items-center gap-2 mb-2">
-          <select id="cameraSelect" class="bg-slate-700 rounded px-2 py-1 text-sm w-36"></select>
+          <select id="cameraSelect" aria-label="Camera device" class="bg-slate-700 rounded px-2 py-1 text-sm w-36"></select>
           <button id="startCamera" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm font-semibold">Start</button>
           <button id="stopCamera" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Stop</button>
           <span id="cameraStatus" class="text-xs text-slate-400">Camera: off</span>
@@ -38,15 +38,15 @@
           <button id="scanAuto" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-2 text-sm font-semibold">Scan Auto</button>
         </div>
         <div class="flex gap-2">
-          <input id="gatewayIP" value="192.168.4.1" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Gateway IP">
-          <input id="gatewayPort" value="8888" class="bg-slate-700 rounded px-2 py-1 text-sm w-24" placeholder="Port">
+          <input id="gatewayIP" aria-label="Gateway IP" value="192.168.4.1" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Gateway IP">
+          <input id="gatewayPort" aria-label="Gateway port" value="8888" class="bg-slate-700 rounded px-2 py-1 text-sm w-24" placeholder="Port">
         </div>
       </div>
 
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-slate-400 mb-3">Connected Devices</h2>
         <div class="flex gap-2 items-center mb-2">
-          <select id="deviceSelect" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1"></select>
+          <select id="deviceSelect" aria-label="Device selector" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1"></select>
           <button id="selectDevice" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm font-semibold">Use</button>
         </div>
         <div id="deviceMeta" class="text-xs text-slate-400"></div>
@@ -61,10 +61,25 @@
       </div>
 
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Sequence Recorder</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <input id="seqLabel" aria-label="Sequence label" class="bg-slate-700 rounded px-2 py-1 text-sm" placeholder="Emotion label (e.g. calm)">
+          <input id="seqName" aria-label="Sequence name" class="bg-slate-700 rounded px-2 py-1 text-sm" placeholder="Sequence name">
+          <button id="seqRecordToggle" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm font-semibold">Start Recording</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <select id="seqSelect" aria-label="Sequence selector" class="bg-slate-700 rounded px-2 py-1 text-sm"></select>
+          <button id="seqLoad" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm font-semibold">Load</button>
+          <button id="seqPlay" class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1 text-sm font-semibold">Play</button>
+        </div>
+        <div class="flex gap-2 items-center text-xs text-slate-400" id="seqStatus">No sequence loaded</div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-slate-400 mb-3">Raw OSC Console</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-          <input id="oscAddress" value="/info/self" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-1" placeholder="/address">
-          <input id="oscArgs" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-2" placeholder="args: comma separated (e.g. 1,255,hello)">
+          <input id="oscAddress" aria-label="OSC address" value="/info/self" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-1" placeholder="/address">
+          <input id="oscArgs" aria-label="OSC arguments" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-2" placeholder="args: comma separated (e.g. 1,255,hello)">
         </div>
         <div class="flex gap-2 mb-3">
           <button id="sendRawOSC" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm font-semibold">Send OSC</button>
@@ -80,6 +95,10 @@
   let devices = [];
   let selected = null;
   let forcedNodeType = null;
+  let recording = false;
+  let recordStartMs = 0;
+  let recordedEvents = [];
+  let loadedSequence = null;
 
   async function getJSON(url) {
     const r = await fetch(url);
@@ -153,7 +172,7 @@
   }
 
   async function loadCameraList() {
-    const c = await getJSON('/api/cameras');
+    const c = await getJSON('/api/cameras?max=2');
     const sel = document.getElementById('cameraSelect');
     sel.innerHTML = '';
     (c.cameras || [0]).forEach((i) => {
@@ -244,6 +263,9 @@
           <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['relax'])">Relax</button>
           <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['danger'])">Danger</button>
           <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['idle'])">Idle</button>
+          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/state',['alert'])">Alert</button>
+          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="sendRaw('/state',['calm'])">Calm</button>
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/state',['breathe'])">Breathe</button>
           <button class="bg-red-700 hover:bg-red-600 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
         </div>
         <div>Angle <input id="sueAngle" type="range" min="0" max="180" value="90" class="w-full" oninput="sendRaw('/angle',[parseInt(this.value)])"></div>
@@ -274,10 +296,99 @@
       return;
     }
 
+    if (nodeType === 'kait') {
+      holder.innerHTML = `
+        <div class="flex gap-2 flex-wrap">
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
+        </div>
+        <div>Motor Speed (-255~255)
+          <input id="kaitSpeed" type="range" min="-255" max="255" value="0" class="w-full" oninput="sendRaw('/motor',[parseInt(this.value)])">
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[1])">Mode 1</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[2])">Mode 2</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[3])">Mode 3</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[4])">Mode 4</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[5])">Mode 5</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[6])">Mode 6</button>
+        </div>
+      `;
+      return;
+    }
+
     holder.innerHTML = '<div class="text-slate-400">Unknown node type. Use Raw OSC Console.</div>';
   }
 
+  function recordEvent(address, args) {
+    if (!recording) return;
+    const t = (Date.now() - recordStartMs) / 1000.0;
+    recordedEvents.push({ t, address, args });
+    updateSequenceStatus(`Recording... ${recordedEvents.length} events`);
+  }
+
+  function updateSequenceStatus(text) {
+    document.getElementById('seqStatus').textContent = text;
+  }
+
+  async function loadSequences() {
+    const data = await getJSON('/api/sequences/list');
+    const sel = document.getElementById('seqSelect');
+    sel.innerHTML = '';
+    (data.items || []).forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = `${item.label}/${item.name}`;
+      opt.textContent = `${item.label} :: ${item.name}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function saveSequence() {
+    const label = document.getElementById('seqLabel').value || 'unlabeled';
+    const name = document.getElementById('seqName').value || 'sequence';
+    const payload = {
+      label,
+      name,
+      node_type: activeNodeType(),
+      events: recordedEvents
+    };
+    const resp = await postJSON('/api/sequences/save', payload);
+    updateSequenceStatus(resp.status === 'ok' ? `Saved ${label}/${name}` : 'Save failed');
+    await loadSequences();
+  }
+
+  async function loadSequence() {
+    const sel = document.getElementById('seqSelect').value;
+    if (!sel) return;
+    const [label, name] = sel.split('/');
+    const resp = await getJSON(`/api/sequences/load?label=${encodeURIComponent(label)}&name=${encodeURIComponent(name)}`);
+    if (resp.status === 'ok') {
+      loadedSequence = resp.sequence;
+      updateSequenceStatus(`Loaded ${label}/${name} (${loadedSequence.events.length} events)`);
+    } else {
+      updateSequenceStatus('Load failed');
+    }
+  }
+
+  async function playSequence() {
+    if (!loadedSequence || !loadedSequence.events) {
+      updateSequenceStatus('No sequence loaded');
+      return;
+    }
+    updateSequenceStatus(`Playing ${loadedSequence.name}`);
+    loadedSequence.events.forEach((evt) => {
+      setTimeout(() => {
+        sendRaw(evt.address, evt.args);
+      }, Math.max(0, evt.t * 1000));
+    });
+  }
+
   async function sendRaw(address, args) {
+    recordEvent(address, args);
+
+    if (!selected) {
+      updateSequenceStatus('No device selected (recording only)');
+      return;
+    }
     await postJSON('/api/osc/raw', { target: selected, address, args });
     await refreshHistory();
   }
@@ -354,15 +465,38 @@
     document.getElementById('sendRawOSC').onclick = async () => {
       const address = document.getElementById('oscAddress').value.trim();
       const args = parseArgs(document.getElementById('oscArgs').value);
-      await postJSON('/api/osc/raw', { target: selected, address, args });
+      await sendRaw(address, args);
       await refreshHistory();
     };
 
-    document.getElementById('refreshHistory').onclick = refreshHistory;
+    document.getElementById('seqRecordToggle').onclick = async () => {
+      recording = !recording;
+      const btn = document.getElementById('seqRecordToggle');
+      if (recording) {
+        recordedEvents = [];
+        recordStartMs = Date.now();
+        btn.textContent = 'Stop Recording';
+        btn.classList.remove('bg-emerald-600');
+        btn.classList.add('bg-amber-600');
+        updateSequenceStatus('Recording...');
+      } else {
+        btn.textContent = 'Start Recording';
+        btn.classList.remove('bg-amber-600');
+        btn.classList.add('bg-emerald-600');
+        updateSequenceStatus(`Recorded ${recordedEvents.length} events`);
+        await saveSequence();
+      }
+    };
+
+    document.getElementById('seqLoad').onclick = loadSequence;
+    document.getElementById('seqPlay').onclick = playSequence;
 
     document.getElementById('startCamera').onclick = async () => {
       const idx = parseInt(document.getElementById('cameraSelect').value || '0', 10);
-      await postJSON('/api/camera/start', { index: idx });
+      const resp = await postJSON('/api/camera/start', { index: idx });
+      if (resp && resp.status === 'error') {
+        document.getElementById('faceInfo').textContent = `Camera start failed: ${resp.detail || 'unknown error'}`;
+      }
       await refreshCameraState();
     };
 
@@ -392,6 +526,8 @@
     await loadCameraList();
     await refreshCameraState();
     await refreshDevices();
+    renderTabs();
+    await loadSequences();
     await refreshHistory();
   }
 

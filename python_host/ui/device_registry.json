@@ -3,6 +3,7 @@
   "known_devices": {
     "F7OWER_00": {"node_type": "sylvie", "label": "Sylvie Gateway"},
     "F7OWER_01": {"node_type": "sylvie", "label": "Sylvie Client"},
+    "F7OWER_kait": {"node_type": "kait", "label": "Kait Node"},
     "sue_1": {"node_type": "sue", "label": "Sue Node"},
     "face_track_1": {"node_type": "face_track", "label": "Face Tracking Node"}
   },
@@ -29,7 +30,7 @@
     },
     "kait": {
       "label": "Kait",
-      "description": "1x rotation servo"
+      "description": "1x DC motor + motion modes"
     },
     "unknown": {
       "label": "Unknown",
@@ -37,4 +38,3 @@
     }
   }
 }
-

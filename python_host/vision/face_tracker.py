@@ -12,6 +12,7 @@ import cv2
 import math
 import threading
 import time
+import sys
 
 
 class FaceTracker:
@@ -39,7 +40,8 @@ class FaceTracker:
 
     def start(self):
         """Open camera and begin capture thread."""
-        self._cap = cv2.VideoCapture(self._camera_index)
+        backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+        self._cap = cv2.VideoCapture(self._camera_index, backend)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._frame_width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._frame_height)
         if not self._cap.isOpened():
@@ -148,12 +150,22 @@ class FaceTracker:
             self._primary_target = best_target
 
     @staticmethod
-    def list_cameras(max_check=5):
-        """Probe available camera indices."""
+    def list_cameras(max_check=2):
+        """Probe available camera indices.
+
+        Defaults to a small range to avoid noisy AVFoundation warnings.
+        """
         available = []
+        failures = 0
+        backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
         for i in range(max_check):
-            cap = cv2.VideoCapture(i)
+            cap = cv2.VideoCapture(i, backend)
             if cap.isOpened():
                 available.append(i)
                 cap.release()
+                failures = 0
+            else:
+                failures += 1
+                if available and failures >= 1:
+                    break
         return available
