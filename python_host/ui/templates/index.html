@@ -184,7 +184,11 @@
     const c = await getJSON('/api/cameras?max=2');
     const sel = document.getElementById('cameraSelect');
     sel.innerHTML = '';
-    (c.cameras || [0]).forEach((i) => {
+
+    const cameraList = (c && Array.isArray(c.cameras) && c.cameras.length)
+      ? c.cameras
+      : [0];
+    cameraList.forEach((i) => {
       const opt = document.createElement('option');
       opt.value = i;
       opt.textContent = `Camera ${i}`;
@@ -431,277 +435,200 @@
     await sendRaw(`/motor${id}`, [dir, speed]);
   }
 
-  function normalizeSylvieSpeed(raw) {
-    const deadband = 24;
-    const minEffective = 150;
-    let v = Math.max(-255, Math.min(255, parseInt(raw || 0, 10)));
-    if (Math.abs(v) <= deadband) return 0;
-    if (Math.abs(v) < minEffective) v = v > 0 ? minEffective : -minEffective;
-    return v;
+  async function sendLED(id) {
+    const hex = document.getElementById(`led${id}`).value;
+    const r = parseInt(hex.substring(1, 3), 16);
+    const g = parseInt(hex.substring(3, 5), 16);
+    const b = parseInt(hex.substring(5, 7), 16);
+    await sendRaw(`/led${id}`, [r, g, b]);
   }
 
-  async function setSylvieManualMode() {
-    if (sylvieManualArmed) return;
-    await sendRaw('/auto', [0]);
-    sylvieManualArmed = true;
+  async function sendSueLED() {
+    const r = parseInt(document.getElementById('sueR').value, 10);
+    const g = parseInt(document.getElementById('sueG').value, 10);
+    await sendRaw('/led', [r, g]);
   }
 
-  async function sendSylvieMotorSigned(motorId, signedSpeed, force = false) {
-    const now = Date.now();
-    if (!force && now - (lastMotorSendAt[motorId] || 0) < 60) return;
-    lastMotorSendAt[motorId] = now;
-
-    await setSylvieManualMode();
-
-    const v = normalizeSylvieSpeed(signedSpeed);
-    const dir = v === 0 ? 0 : (v > 0 ? 1 : -1);
-    const speed = Math.abs(v);
-    await sendRaw(`/motor${motorId}`, [dir, speed]);
-
-    const el = document.getElementById(`sylvieMotor${motorId}Text`);
-    if (el) {
-      el.textContent = v === 0 ? '0 (stop)' : `${v}`;
-    }
+  async function sendFacePair(idx) {
+    const pan = parseInt(document.getElementById(`pan${idx}`).value, 10);
+    const tilt = parseInt(document.getElementById(`tilt${idx}`).value, 10);
+    await sendRaw(`/flower${idx}`, [pan, tilt]);
   }
 
-  async function sendSylvieMotorFromSlider(motorId, value) {
-    await sendSylvieMotorSigned(motorId, value);
+  async function scan(mode) {
+    const gateway_ip = (document.getElementById('gatewayIP').value || '192.168.4.1').trim();
+    const gateway_port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const data = await postJSON('/api/devices/scan', { mode, gateway_ip, gateway_port });
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    renderDeviceList();
+    renderControls();
   }
 
-  async function sylvieStopAll() {
-    await setSylvieManualMode();
-    const m1 = document.getElementById('sylvieMotor1');
-    const m2 = document.getElementById('sylvieMotor2');
-    if (m1) m1.value = '0';
-    if (m2) m2.value = '0';
-    await sendSylvieMotorSigned(1, 0, true);
-    await sendSylvieMotorSigned(2, 0, true);
-    await sendRaw('/preset', [3]);
+  async function refreshDevices() {
+    const data = await getJSON('/api/devices');
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    renderDeviceList();
+    renderControls();
   }
 
-  function toPadUnit(rect, clientX, clientY) {
-    const rx = Math.max(0, Math.min(rect.width, clientX - rect.left));
-    const ry = Math.max(0, Math.min(rect.height, clientY - rect.top));
-    const nx = (rx / rect.width) * 2 - 1;
-    const ny = 1 - (ry / rect.height) * 2;
-    return { x: nx, y: ny, px: rx, py: ry };
-  }
-
-  function setPadDot(px, py) {
-    const dot = document.getElementById('sylviePadDot');
-    if (!dot) return;
-    dot.style.left = `${px}px`;
-    dot.style.top = `${py}px`;
-  }
-
-  function centerPadDot() {
-    const pad = document.getElementById('sylvieDrivePad');
-    if (!pad) return;
-    const rect = pad.getBoundingClientRect();
-    setPadDot(rect.width / 2, rect.height / 2);
-    const text = document.getElementById('sylviePadText');
-    if (text) text.textContent = 'x=0.00 y=0.00';
-  }
-
-  async function applyPadMotors(nx, ny) {
-    const left = Math.max(-1, Math.min(1, ny + nx));
-    const right = Math.max(-1, Math.min(1, ny - nx));
-    await sendSylvieMotorSigned(1, Math.round(left * 255));
-    await sendSylvieMotorSigned(2, Math.round(right * 255));
-  }
-
-  function initSylvieDrivePad() {
-    const pad = document.getElementById('sylvieDrivePad');
-    if (!pad) return;
-
-    sylvieDrivePadState = { active: false, x: 0, y: 0 };
-    centerPadDot();
-
-    const onMove = async (evt) => {
-      if (!sylvieDrivePadState.active) return;
-      const rect = pad.getBoundingClientRect();
-      const p = toPadUnit(rect, evt.clientX, evt.clientY);
-      sylvieDrivePadState.x = p.x;
-      sylvieDrivePadState.y = p.y;
-      setPadDot(p.px, p.py);
-      const text = document.getElementById('sylviePadText');
-      if (text) text.textContent = `x=${p.x.toFixed(2)} y=${p.y.toFixed(2)}`;
-      await applyPadMotors(p.x, p.y);
-    };
-
-    const onUp = async () => {
-      if (!sylvieDrivePadState.active) return;
-      sylvieDrivePadState.active = false;
-      centerPadDot();
-      await sendSylvieMotorSigned(1, 0, true);
-      await sendSylvieMotorSigned(2, 0, true);
-    };
-
-    pad.onpointerdown = async (evt) => {
-      evt.preventDefault();
-      sylvieDrivePadState.active = true;
-      pad.setPointerCapture(evt.pointerId);
-      await onMove(evt);
-    };
-
-    pad.onpointermove = (evt) => { onMove(evt); };
-    pad.onpointerup = () => { onUp(); };
-    pad.onpointercancel = () => { onUp(); };
-    pad.onpointerleave = () => { onUp(); };
-  }
-
-  async function sendSerialDebugLine() {
-    const input = document.getElementById('serialDebugLine');
-    if (!input) return;
-    const line = (input.value || '').trim();
-    if (!line) return;
-
-    const resp = await postJSON('/api/serial/raw', { line });
-    if (resp && resp.status === 'ok') {
-      input.value = '';
-    }
-    await refreshTrackingUI();
-  }
-
-  async function refreshSerialPorts(scan = false) {
-    const data = await getJSON(`/api/serial/ports?scan=${scan ? 1 : 0}`);
-    const sel = document.getElementById('serialPortSelect');
-    if (!sel) return;
-
-    const selectedPort = (trackingState && trackingState.serial && trackingState.serial.port) || '';
-    sel.innerHTML = '<option value="">-- select port --</option>';
-    (data.ports || []).forEach((p) => {
-      const opt = document.createElement('option');
-      opt.value = p.device;
-      opt.textContent = `${p.device} ${p.description ? `(${p.description})` : ''}`;
-      if (p.device === selectedPort) opt.selected = true;
-      sel.appendChild(opt);
+  async function refreshHistory() {
+    const data = await getJSON('/api/osc/history?limit=30');
+    const items = (data.items || []).map((item) => {
+      const dt = new Date(item.ts * 1000).toLocaleTimeString();
+      return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
     });
+    document.getElementById('oscLog').textContent = items.join('\n');
   }
 
-  async function refreshTrackingUI() {
-    await getTrackingConfig();
-    if (document.getElementById('serialPortSelect')) {
-      await refreshSerialPorts(false);
+  async function addManualDevice() {
+    const ip = (document.getElementById('gatewayIP').value || '').trim();
+    const port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const nameInput = (document.getElementById('manualName').value || '').trim();
+    if (!ip) {
+      document.getElementById('connStatus').textContent = 'Manual add failed: empty IP';
+      return;
     }
-    renderTrackingStatus();
-  }
 
-  async function setTrackingEnabled(on) {
-    await postJSON('/api/tracking/config', { enabled: !!on });
-    await refreshTrackingUI();
-  }
-
-  async function applyTrackingTransport() {
-    const transportEl = document.getElementById('trackTransport');
-    const portEl = document.getElementById('serialPortSelect');
-    const baudEl = document.getElementById('serialBaud');
-
+    const fallbackName = `manual_${ip.replace(/\./g, '_')}_${port}`;
     const payload = {
-      transport: transportEl ? transportEl.value : 'osc',
-      serial_port: portEl ? portEl.value : '',
-      serial_baud: baudEl ? parseInt(baudEl.value || '115200', 10) : 115200,
-    };
-    await postJSON('/api/tracking/config', payload);
-    await refreshTrackingUI();
-  }
-
-  async function connectSerialNow() {
-    const portEl = document.getElementById('serialPortSelect');
-    const baudEl = document.getElementById('serialBaud');
-    await postJSON('/api/tracking/config', {
-      serial_port: portEl ? portEl.value : '',
-      serial_baud: baudEl ? parseInt(baudEl.value || '115200', 10) : 115200,
-      serial_connect: true,
-    });
-    await refreshTrackingUI();
-  }
-
-  async function init() {
-    registry = await getJSON('/api/devices/registry');
-
-    document.getElementById('scanMDNS').onclick = () => scan('mdns');
-    document.getElementById('scanGateway').onclick = () => scan('gateway');
-    document.getElementById('scanAuto').onclick = () => scan('auto');
-    document.getElementById('addManual').onclick = addManualDevice;
-
-    document.getElementById('selectDevice').onclick = async () => {
-      const name = document.getElementById('deviceSelect').value;
-      if (!name) return;
-      await postJSON('/api/devices/select', { name });
-      selected = name;
-      renderDeviceList();
-      renderControls();
+      name: nameInput || fallbackName,
+      ip,
+      port,
+      node_type: activeNodeType() === 'unknown' ? null : activeNodeType(),
     };
 
-    document.getElementById('sendRawOSC').onclick = async () => {
-      const address = document.getElementById('oscAddress').value.trim();
-      const args = parseArgs(document.getElementById('oscArgs').value);
-      await sendRaw(address, args);
-      await refreshHistory();
-    };
-
-    document.getElementById('seqRecordToggle').onclick = async () => {
-      recording = !recording;
-      const btn = document.getElementById('seqRecordToggle');
-      if (recording) {
-        recordedEvents = [];
-        recordStartMs = Date.now();
-        btn.textContent = 'Stop Recording';
-        btn.classList.remove('bg-emerald-600');
-        btn.classList.add('bg-amber-600');
-        updateSequenceStatus('Recording...');
-      } else {
-        btn.textContent = 'Start Recording';
-        btn.classList.remove('bg-amber-600');
-        btn.classList.add('bg-emerald-600');
-        updateSequenceStatus(`Recorded ${recordedEvents.length} events`);
-        await saveSequence();
-      }
-    };
-
-    document.getElementById('seqLoad').onclick = loadSequence;
-    document.getElementById('seqPlay').onclick = playSequence;
-
-    document.getElementById('startCamera').onclick = async () => {
-      const idx = parseInt(document.getElementById('cameraSelect').value || '0', 10);
-      const resp = await postJSON('/api/camera/start', { index: idx });
-      if (resp && resp.status === 'error') {
-        document.getElementById('faceInfo').textContent = `Camera start failed: ${resp.detail || 'unknown error'}`;
-      }
-      await refreshCameraState();
-    };
-
-    document.getElementById('stopCamera').onclick = async () => {
-      await postJSON('/api/camera/stop', {});
-      await refreshCameraState();
-    };
-
-    setInterval(async () => {
-      try {
-        const data = await getJSON('/api/faces');
-        const el = document.getElementById('faceInfo');
-        if (!data.camera_running) {
-          el.textContent = 'Camera is off';
-          return;
-        }
-        if (data.primary) {
-          el.textContent = `X:${data.primary[0].toFixed(3)} Y:${data.primary[1].toFixed(3)} W:${data.primary[2].toFixed(1)}`;
-        } else {
-          el.textContent = 'No face detected';
-        }
-      } catch (e) {
-        // keep silent
-      }
-    }, 600);
-
-    await loadCameraList();
-    await refreshCameraState();
+    const resp = await postJSON('/api/osc/target', payload);
+    if (resp && resp.status === 'ok' && resp.device) {
+      selected = resp.device.name;
+    }
     await refreshDevices();
-    renderTabs();
-    await loadSequences();
-    await refreshHistory();
-    await getTrackingConfig();
+  }
+
+  async function getTrackingConfig() {
+    trackingState = await getJSON('/api/tracking/config');
+    return trackingState;
+  }
+
+  function renderTrackingStatus() {
+    const el = document.getElementById('trackStatus');
+    if (!el || !trackingState) return;
+
+    const t = trackingState.tracking || {};
+    const s = trackingState.serial || {};
+    const targetText = trackingState.selected_target || '-';
+    const connected = s.connected ? 'connected' : 'disconnected';
+    el.textContent = `auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
+
+    const transportSel = document.getElementById('trackTransport');
+    if (transportSel && t.transport) transportSel.value = t.transport;
+
+    const baudInput = document.getElementById('serialBaud');
+    if (baudInput && s.baud) baudInput.value = s.baud;
+  }
+
+  // ...existing code...
+  async function init() {
+    try {
+      registry = await getJSON('/api/devices/registry');
+
+      document.getElementById('scanMDNS').onclick = async () => {
+        try { await scan('mdns'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('scanGateway').onclick = async () => {
+        try { await scan('gateway'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('scanAuto').onclick = async () => {
+        try { await scan('auto'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('addManual').onclick = async () => {
+        try { await addManualDevice(); } catch (e) { console.error(e); }
+      };
+
+      document.getElementById('selectDevice').onclick = async () => {
+        const name = document.getElementById('deviceSelect').value;
+        if (!name) return;
+        await postJSON('/api/devices/select', { name });
+        selected = name;
+        renderDeviceList();
+        renderControls();
+      };
+
+      document.getElementById('sendRawOSC').onclick = async () => {
+        const address = document.getElementById('oscAddress').value.trim();
+        const args = parseArgs(document.getElementById('oscArgs').value);
+        await sendRaw(address, args);
+        await refreshHistory();
+      };
+
+      document.getElementById('seqRecordToggle').onclick = async () => {
+        recording = !recording;
+        const btn = document.getElementById('seqRecordToggle');
+        if (recording) {
+          recordedEvents = [];
+          recordStartMs = Date.now();
+          btn.textContent = 'Stop Recording';
+          btn.classList.remove('bg-emerald-600');
+          btn.classList.add('bg-amber-600');
+          updateSequenceStatus('Recording...');
+        } else {
+          btn.textContent = 'Start Recording';
+          btn.classList.remove('bg-amber-600');
+          btn.classList.add('bg-emerald-600');
+          updateSequenceStatus(`Recorded ${recordedEvents.length} events`);
+          await saveSequence();
+        }
+      };
+
+      document.getElementById('seqLoad').onclick = loadSequence;
+      document.getElementById('seqPlay').onclick = playSequence;
+
+      document.getElementById('startCamera').onclick = async () => {
+        const idx = parseInt(document.getElementById('cameraSelect').value || '0', 10);
+        const resp = await postJSON('/api/camera/start', { index: idx });
+        if (resp && resp.status === 'error') {
+          document.getElementById('faceInfo').textContent = `Camera start failed: ${resp.detail || 'unknown error'}`;
+        }
+        await refreshCameraState();
+      };
+
+      document.getElementById('stopCamera').onclick = async () => {
+        await postJSON('/api/camera/stop', {});
+        await refreshCameraState();
+      };
+
+      setInterval(async () => {
+        try {
+          const data = await getJSON('/api/faces');
+          const el = document.getElementById('faceInfo');
+          if (!data.camera_running) {
+            el.textContent = 'Camera is off';
+            return;
+          }
+          if (data.primary) {
+            el.textContent = `X:${data.primary[0].toFixed(3)} Y:${data.primary[1].toFixed(3)} W:${data.primary[2].toFixed(1)}`;
+          } else {
+            el.textContent = 'No face detected';
+          }
+        } catch (e) {
+          // keep silent
+        }
+      }, 600);
+
+      await loadCameraList();
+      await refreshCameraState();
+      await refreshDevices();
+      renderTabs();
+      await loadSequences();
+      await refreshHistory();
+      await getTrackingConfig();
+    } catch (err) {
+      console.error('init failed', err);
+      document.getElementById('connStatus').textContent = `Init error: ${err.message || err}`;
+      renderTabs();
+      renderControls();
+    }
   }
 
   init();
