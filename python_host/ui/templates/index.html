@@ -67,6 +67,12 @@
             <span class="text-xs text-slate-400">Emotion Reactor Tuning</span>
             <span id="reactorConfigStatus" class="text-xs text-slate-500">runtime</span>
           </div>
+          <div class="flex flex-wrap gap-2 mb-2">
+            <button id="modeSafe" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-xs">Safe</button>
+            <button id="modeBalanced" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-xs">Balanced</button>
+            <button id="modeDramatic" class="bg-rose-600 hover:bg-rose-500 rounded px-3 py-1 text-xs">Dramatic</button>
+            <span id="showcaseModeStatus" class="text-xs text-slate-500 self-center">Mode: Balanced</span>
+          </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
             <label class="text-slate-300">Enter Threshold <span id="reactorEnterVal" class="text-slate-500"></span>
               <input id="reactorEnter" type="range" min="0.6" max="3.0" step="0.05" class="w-full">
@@ -119,11 +125,25 @@
           <select id="deviceSelect" aria-label="Device selector" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1"></select>
           <button id="selectDevice" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm font-semibold">Use</button>
         </div>
-        <div id="deviceMeta" class="text-xs text-slate-400"></div>
+        <div id="deviceMeta" class="text-xs text-slate-400 mb-2"></div>
+        <div class="text-xs text-slate-500 mb-1">Emotion Routing Targets (checked = auto emotion control)</div>
+        <div id="deviceChecklist" class="space-y-1 text-xs"></div>
       </div>
     </section>
 
     <section class="space-y-4">
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-400">Emotion Override (Manual Takeover)</h2>
+            <div class="text-xs text-slate-500">ON = emotion scheduling active, OFF = manual-only control</div>
+          </div>
+          <label class="inline-flex items-center gap-2">
+            <input id="emotionDispatchToggle" type="checkbox" class="h-4 w-4 accent-emerald-500" checked>
+          </label>
+        </div>
+      </div>
+
       <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
         <h2 class="text-sm font-semibold text-slate-400 mb-3">Node Controls</h2>
         <div id="nodeTypeTabs" class="flex flex-wrap gap-2 mb-3"></div>
@@ -164,6 +184,7 @@
   let registry = {};
   let devices = [];
   let selected = null;
+  let emotionTargets = new Set();
   let forcedNodeType = null;
   let recording = false;
   let recordStartMs = 0;
@@ -177,6 +198,7 @@
   let lastSueSendAt = { motion: 0, led: 0 };
   let reactorConfigTimer = null;
   let reactorConfigLoaded = false;
+  let showcaseMode = 'balanced';
   const SYLVIE_DEADBAND = 20;
   const SYLVIE_MIN_EFFECTIVE = 150;
   const SYLVIE_SEND_INTERVAL_MS = 40;
@@ -236,9 +258,24 @@
     holder.innerHTML = html;
 
     holder.querySelectorAll('button').forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const node = btn.getAttribute('data-node');
         forcedNodeType = (node === '__follow') ? null : node;
+
+        if (forcedNodeType) {
+          const candidates = devices.filter((d) => d.node_type === forcedNodeType);
+          if (candidates.length > 0) {
+            let pick = candidates.find((d) => d.name === selected);
+            if (!pick) {
+              pick = [...candidates].sort((a, b) => `${a.ip}:${a.port}`.localeCompare(`${b.ip}:${b.port}`))[0];
+            }
+            if (pick && pick.name && pick.name !== selected) {
+              await postJSON('/api/devices/select', { name: pick.name });
+              selected = pick.name;
+            }
+          }
+        }
+
         renderDeviceList();
         renderControls();
       };
@@ -377,6 +414,99 @@
     };
   }
 
+  const SHOWCASE_MODES = {
+    safe: {
+      enter_th: 2.0,
+      exit_th: 1.2,
+      decay: 0.92,
+      shock_scale: 1.2,
+      bloom_gain: 1.0,
+      alert_gain: 1.05,
+      soothe_gain: 0.85,
+      hold_bloom_ms: 700,
+      hold_alert_ms: 520,
+      hold_soothe_ms: 2400,
+      command_cooldown_ms: 1400,
+    },
+    balanced: {
+      enter_th: 1.8,
+      exit_th: 1.0,
+      decay: 0.88,
+      shock_scale: 2.2,
+      bloom_gain: 1.25,
+      alert_gain: 1.35,
+      soothe_gain: 0.75,
+      hold_bloom_ms: 600,
+      hold_alert_ms: 360,
+      hold_soothe_ms: 1800,
+      command_cooldown_ms: 1200,
+    },
+    dramatic: {
+      enter_th: 1.45,
+      exit_th: 0.85,
+      decay: 0.83,
+      shock_scale: 4.0,
+      bloom_gain: 1.65,
+      alert_gain: 1.9,
+      soothe_gain: 0.58,
+      hold_bloom_ms: 140,
+      hold_alert_ms: 80,
+      hold_soothe_ms: 2600,
+      command_cooldown_ms: 800,
+    },
+  };
+
+  function renderShowcaseModeState() {
+    const status = document.getElementById('showcaseModeStatus');
+    if (status) status.textContent = `Mode: ${showcaseMode[0].toUpperCase()}${showcaseMode.slice(1)}`;
+
+    const style = {
+      safe: ['modeSafe', 'bg-slate-500'],
+      balanced: ['modeBalanced', 'bg-emerald-500'],
+      dramatic: ['modeDramatic', 'bg-rose-500'],
+    };
+    ['modeSafe', 'modeBalanced', 'modeDramatic'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.classList.remove('ring-2', 'ring-white', 'bg-slate-500', 'bg-emerald-500', 'bg-rose-500');
+    });
+    const active = style[showcaseMode];
+    if (active) {
+      const btn = document.getElementById(active[0]);
+      if (btn) {
+        btn.classList.add('ring-2', 'ring-white', active[1]);
+      }
+    }
+  }
+
+  async function applyShowcaseMode(mode) {
+    if (!SHOWCASE_MODES[mode]) return;
+    showcaseMode = mode;
+    renderShowcaseModeState();
+    await postJSON('/api/reactor/config', SHOWCASE_MODES[mode]);
+    await loadReactorConfig();
+  }
+
+  function bindShowcaseModeButtons() {
+    const map = {
+      modeSafe: 'safe',
+      modeBalanced: 'balanced',
+      modeDramatic: 'dramatic',
+    };
+    Object.entries(map).forEach(([id, mode]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.onclick = async () => {
+        try {
+          await applyShowcaseMode(mode);
+        } catch (e) {
+          document.getElementById('reactorConfigStatus').textContent = 'mode apply failed';
+        }
+      };
+    });
+    renderShowcaseModeState();
+  }
+
   async function pushReactorConfig() {
     const status = document.getElementById('reactorConfigStatus');
     try {
@@ -420,6 +550,22 @@
     }
   }
 
+  async function loadEmotionOverrideState() {
+    try {
+      const data = await getJSON('/api/reactor/override');
+      const toggle = document.getElementById('emotionDispatchToggle');
+      if (toggle) {
+        toggle.checked = !!data.enabled;
+        toggle.onchange = async () => {
+          const enabled = !!toggle.checked;
+          await postJSON('/api/reactor/override', { enabled });
+        };
+      }
+    } catch (e) {
+      // keep silent for offline mode
+    }
+  }
+
   async function loadCameraList() {
     const c = await getJSON('/api/cameras?max=2');
     const sel = document.getElementById('cameraSelect');
@@ -456,6 +602,32 @@
     document.getElementById('deviceMeta').textContent = info
       ? `IP ${info.ip}:${info.port} | source: ${info.source}`
       : 'No node selected (use tabs for offline panel debug)';
+
+    const checklist = document.getElementById('deviceChecklist');
+    if (checklist) {
+      if (!devices.length) {
+        checklist.innerHTML = '<div class="text-slate-500">No discovered devices yet</div>';
+      } else {
+        checklist.innerHTML = devices.map((d) => {
+          const checked = emotionTargets.has(d.name) ? 'checked' : '';
+          return `
+            <label class="flex items-center justify-between gap-2 bg-slate-900 rounded px-2 py-1">
+              <span class="truncate">${d.name} (${d.node_type})</span>
+              <input type="checkbox" data-emotion-target="${d.name}" ${checked} class="h-3.5 w-3.5 accent-emerald-500">
+            </label>
+          `;
+        }).join('');
+
+        checklist.querySelectorAll('input[data-emotion-target]').forEach((cb) => {
+          cb.onchange = async () => {
+            const names = Array.from(checklist.querySelectorAll('input[data-emotion-target]:checked'))
+              .map((el) => el.getAttribute('data-emotion-target'));
+            await postJSON('/api/devices/emotion_targets', { names });
+            emotionTargets = new Set(names);
+          };
+        });
+      }
+    }
 
     renderTabs();
   }
@@ -916,6 +1088,7 @@
     const data = await postJSON('/api/devices/scan', { mode, gateway_ip, gateway_port });
     devices = data.devices || [];
     selected = data.selected || selected;
+    emotionTargets = new Set(data.emotion_targets || (devices.filter((d) => d.emotion_enabled).map((d) => d.name)));
     renderDeviceList();
     renderControls();
   }
@@ -924,6 +1097,7 @@
     const data = await getJSON('/api/devices');
     devices = data.devices || [];
     selected = data.selected || selected;
+    emotionTargets = new Set(data.emotion_targets || (devices.filter((d) => d.emotion_enabled).map((d) => d.name)));
     renderDeviceList();
     renderControls();
   }
@@ -1213,7 +1387,9 @@
       }, 600);
 
       await loadCameraList();
+      bindShowcaseModeButtons();
       await loadReactorConfig();
+      await loadEmotionOverrideState();
       await refreshCameraState();
       await refreshDevices();
       renderTabs();

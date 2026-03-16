@@ -23,8 +23,9 @@ class EmotionReactor:
     def __init__(
         self,
         osc_sender,
-        get_selected_target,
-        get_selected_node_type,
+        get_target_devices=None,
+        get_selected_target=None,
+        get_selected_node_type=None,
         *,
         enter_th=1.8,
         exit_th=1.0,
@@ -34,6 +35,7 @@ class EmotionReactor:
         decay=0.88,
     ):
         self._osc = osc_sender
+        self._get_target_devices = get_target_devices
         self._get_selected_target = get_selected_target
         self._get_selected_node_type = get_selected_node_type
 
@@ -74,7 +76,10 @@ class EmotionReactor:
 
         self._last_command_ts = 0.0
         self._last_command = None
+        self._last_command_ts_by_target = {}
+        self._last_command_by_target = {}
         self._option_index = defaultdict(int)
+        self._enabled = True
 
     def reset(self):
         """Reset dynamic state when camera stops."""
@@ -90,6 +95,33 @@ class EmotionReactor:
         self._source_model = None
         self._last_command_ts = 0.0
         self._last_command = None
+        self._last_command_ts_by_target = {}
+        self._last_command_by_target = {}
+
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
+
+    def is_enabled(self):
+        return bool(self._enabled)
+
+    def _dispatch_targets(self):
+        if callable(self._get_target_devices):
+            devices = self._get_target_devices() or []
+            out = []
+            for dev in devices:
+                name = str(dev.get("name", "")).strip()
+                node_type = str(dev.get("node_type", "unknown")).strip() or "unknown"
+                if not name:
+                    continue
+                out.append({"name": name, "node_type": node_type})
+            return out
+
+        # Backward-compatible fallback for tests or legacy wiring.
+        target = self._get_selected_target() if callable(self._get_selected_target) else None
+        node_type = self._get_selected_node_type() if callable(self._get_selected_node_type) else "unknown"
+        if target:
+            return [{"name": str(target), "node_type": str(node_type or "unknown")}]
+        return []
 
     def update(self, perception, has_face):
         """Consume latest perception data and advance the reactor state machine."""
@@ -125,6 +157,7 @@ class EmotionReactor:
 
     def get_config(self):
         return {
+            "enabled": self._enabled,
             "enter_th": self._enter_th,
             "exit_th": self._exit_th,
             "decay": self._decay,
@@ -245,6 +278,8 @@ class EmotionReactor:
             },
             "config": self.get_config(),
             "last_command": self._last_command,
+            "enabled": self._enabled,
+            "target_count": len(self._dispatch_targets()),
         }
 
     def _score_increment(self, flower, confidence):
@@ -328,35 +363,50 @@ class EmotionReactor:
         self._pending_since_ts = 0.0
 
     def _maybe_dispatch(self, now):
-        target = self._get_selected_target()
-        node_type = self._get_selected_node_type()
-        if not target or not node_type:
+        if not self._enabled:
             return
 
-        command = self._command_for(node_type=node_type, flower_emotion=self._current)
-        if command is None:
+        targets = self._dispatch_targets()
+        if not targets:
             return
 
-        address, args = command
-        serialized = {
-            "target": target,
-            "node_type": node_type,
-            "address": address,
-            "args": list(args),
-            "flower_emotion": self._current,
-            "ts": round(now, 3),
-        }
+        sent_any = False
+        for item in targets:
+            target = item["name"]
+            node_type = item["node_type"]
+            command = self._command_for(node_type=node_type, flower_emotion=self._current)
+            if command is None:
+                continue
 
-        if self._last_command == serialized:
-            return
+            address, args = command
+            serialized = {
+                "target": target,
+                "node_type": node_type,
+                "address": address,
+                "args": list(args),
+                "flower_emotion": self._current,
+            }
 
-        if self._last_command_ts > 0.0 and (now - self._last_command_ts) * 1000.0 < self._command_cooldown_ms:
-            return
+            if self._last_command_by_target.get(target) == serialized:
+                continue
 
-        sent = self._osc.send_raw(target, address, list(args), source="auto")
-        if sent:
+            last_ts = self._last_command_ts_by_target.get(target, 0.0)
+            if last_ts > 0.0 and (now - last_ts) * 1000.0 < self._command_cooldown_ms:
+                continue
+
+            sent = self._osc.send_raw(target, address, list(args), source="auto")
+            if sent:
+                sent_any = True
+                self._last_command_ts_by_target[target] = now
+                self._last_command_by_target[target] = serialized
+
+        if sent_any:
             self._last_command_ts = now
-            self._last_command = serialized
+            self._last_command = {
+                "flower_emotion": self._current,
+                "targets": len(targets),
+                "ts": round(now, 3),
+            }
 
     def _command_for(self, node_type, flower_emotion):
         node = str(node_type or "").lower()
@@ -383,7 +433,7 @@ class EmotionReactor:
             mapping = {
                 "BLOOM": ("/preset", [1]),
                 "ALERT": ("/preset", [2]),
-                "SOOTHE": ("/preset", [3]),
+                "SOOTHE": ("/preset", [4]),
                 "REST": ("/preset", [3]),
             }
             return mapping.get(flower_emotion)

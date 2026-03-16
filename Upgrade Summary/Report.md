@@ -10,6 +10,10 @@ Merged `python_host_emo` emotion capability into `python_host` using a minimal-r
 
 ## What Changed
 
+### 0) Startup auto-scan
+- Updated `python_host/main.py` to run one automatic LAN device discovery pass at startup.
+- Discovered devices are registered immediately so no manual scan click is required before emotion routing.
+
 ### 1) Backend integration in `python_host`
 - Added `PerceptionModule` usage inside `python_host/ui/app.py`.
 - Started perception only when camera starts (`_start_camera`).
@@ -63,6 +67,25 @@ Implemented in `EmotionReactor`:
   - `ALERT -> /preset 2`
   - `SOOTHE -> /preset 3`
   - `REST -> /preset 3`
+
+### 4.1) Multi-target emotion dispatch mode
+- Reactor target source changed from single selected device to current checked device list.
+- Added per-device routing selection in backend and UI:
+  - `GET/POST /api/devices/emotion_targets`
+- Behavior:
+  - scanned + known in `device_registry.json` => auto-checked for emotion routing
+  - scanned but unknown => not auto-checked
+  - manual checkbox controls participation in emotion-driven OSC dispatch
+
+### 4.2) Global emotion scheduling switch
+- Added `GET/POST /api/reactor/override`.
+- UI switch: `Emotion Override (Manual Takeover)`
+  - ON => emotion scheduling active (default)
+  - OFF => manual-only mode (emotion routing suspended)
+
+### 4.3) Node Controls manual target binding
+- Clicking node-type tabs now auto-selects a matching discovered device (by type, deterministic order by IP/port).
+- Manual OSC commands in Node Controls therefore route to the correct selected device automatically.
 
 ### 5) UI update
 Updated `python_host/ui/templates/index.html` with a compact "Flower Emotion" status block:

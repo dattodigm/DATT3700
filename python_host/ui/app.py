@@ -51,6 +51,7 @@ _camera_index = 0
 _devices_lock = threading.Lock()
 _devices = {}
 _selected_device = None
+_known_device_names = set(registry.get("known_devices", {}).keys())
 
 
 def _jsonable(obj):
@@ -100,10 +101,20 @@ def _register_device(device):
         "source": device.get("source", "manual"),
         "metadata": device.get("metadata", {}),
     }
+    explicit_emotion_enabled = device.get("emotion_enabled")
+    discovered = entry["source"] in ("mdns", "gateway_self", "gateway_client")
+    default_emotion_enabled = discovered and (entry["name"] in _known_device_names)
     entry["label"] = _device_label(entry)
     osc.add_target(entry["name"], entry["ip"], entry["port"])
 
     with _devices_lock:
+        prev = _devices.get(entry["name"])
+        if explicit_emotion_enabled is None and prev is not None:
+            entry["emotion_enabled"] = bool(prev.get("emotion_enabled", False))
+        elif explicit_emotion_enabled is None:
+            entry["emotion_enabled"] = bool(default_emotion_enabled)
+        else:
+            entry["emotion_enabled"] = bool(explicit_emotion_enabled)
         _devices[entry["name"]] = entry
     return entry
 
@@ -127,10 +138,26 @@ def _selected_node_type():
     return "unknown"
 
 
+def _emotion_target_devices():
+    with _devices_lock:
+        items = []
+        for dev in _devices.values():
+            if not dev.get("emotion_enabled"):
+                continue
+            items.append(
+                {
+                    "name": dev.get("name"),
+                    "ip": dev.get("ip"),
+                    "port": dev.get("port"),
+                    "node_type": dev.get("node_type", "unknown"),
+                }
+            )
+    return items
+
+
 emotion_reactor = EmotionReactor(
     osc_sender=osc,
-    get_selected_target=lambda: _selected_target(),
-    get_selected_node_type=lambda: _selected_node_type(),
+    get_target_devices=lambda: _emotion_target_devices(),
 )
 
 
@@ -329,7 +356,25 @@ def api_device_registry():
 
 @app.route("/api/devices")
 def api_devices():
-    return jsonify({"devices": _list_devices(), "selected": _selected_target()})
+    with _devices_lock:
+        emotion_targets = [name for name, dev in _devices.items() if dev.get("emotion_enabled")]
+    return jsonify({"devices": _list_devices(), "selected": _selected_target(), "emotion_targets": emotion_targets})
+
+
+@app.route("/api/devices/emotion_targets", methods=["GET", "POST"])
+def api_devices_emotion_targets():
+    if request.method == "POST":
+        payload = request.json or {}
+        names = payload.get("names", [])
+        names = set([str(item) for item in names])
+        with _devices_lock:
+            for name, dev in _devices.items():
+                dev["emotion_enabled"] = name in names
+
+    with _devices_lock:
+        enabled = [name for name, dev in _devices.items() if dev.get("emotion_enabled")]
+        devices = list(_devices.values())
+    return jsonify({"status": "ok", "names": enabled, "devices": devices})
 
 
 @app.route("/api/devices/select", methods=["POST"])
@@ -396,6 +441,7 @@ def api_devices_scan():
             "count": len(merged),
             "selected": _selected_target(),
             "devices": _list_devices(),
+            "emotion_targets": [d["name"] for d in _emotion_target_devices()],
         }
     )
 
@@ -403,7 +449,7 @@ def api_devices_scan():
 @app.route("/api/discovery/mdns")
 def api_discovery_mdns():
     merged = _scan_and_register_devices(mode="mdns")
-    return jsonify({"status": "ok", "mode": "mdns", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
+    return jsonify({"status": "ok", "mode": "mdns", "count": len(merged), "devices": _list_devices(), "selected": _selected_target(), "emotion_targets": [d["name"] for d in _emotion_target_devices()]})
 
 
 @app.route("/api/discovery/gateway", methods=["POST"])
@@ -412,13 +458,13 @@ def api_discovery_gateway():
     gateway_ip = data.get("gateway_ip") or data.get("ip") or "192.168.4.1"
     gateway_port = int(data.get("gateway_port") or data.get("port") or 8888)
     merged = _scan_and_register_devices(mode="gateway", gateway_ip=gateway_ip, gateway_port=gateway_port)
-    return jsonify({"status": "ok", "mode": "gateway", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
+    return jsonify({"status": "ok", "mode": "gateway", "count": len(merged), "devices": _list_devices(), "selected": _selected_target(), "emotion_targets": [d["name"] for d in _emotion_target_devices()]})
 
 
 @app.route("/api/discovery/auto", methods=["POST"])
 def api_discovery_auto():
     merged = _scan_and_register_devices(mode="auto")
-    return jsonify({"status": "ok", "mode": "auto", "count": len(merged), "devices": _list_devices(), "selected": _selected_target()})
+    return jsonify({"status": "ok", "mode": "auto", "count": len(merged), "devices": _list_devices(), "selected": _selected_target(), "emotion_targets": [d["name"] for d in _emotion_target_devices()]})
 
 # ── OSC control endpoints ────────────────────────────────────
 
@@ -565,6 +611,15 @@ def api_reactor_config():
     return jsonify({"status": "ok", "config": emotion_reactor.get_config()})
 
 
+@app.route("/api/reactor/override", methods=["GET", "POST"])
+def api_reactor_override():
+    if request.method == "POST":
+        payload = request.json or {}
+        enabled = bool(payload.get("enabled", True))
+        emotion_reactor.set_enabled(enabled)
+    return jsonify({"status": "ok", "enabled": emotion_reactor.is_enabled()})
+
+
 # ── Override toggle ──────────────────────────────────────────
 
 
@@ -703,6 +758,7 @@ def create_app(camera_index=0, esp32_targets=None):
     _camera_running = False
     perception.stop()
     emotion_reactor.reset()
+    emotion_reactor.set_enabled(True)
     tracking_publisher.update_config(enabled=False, transport="osc")
     serial_sender.disconnect()
     if esp32_targets:

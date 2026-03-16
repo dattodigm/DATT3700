@@ -100,3 +100,39 @@ def test_reactor_update_config_changes_values():
     assert cfg["hold_soothe_ms"] == 2200
 
 
+def test_reactor_dispatches_to_multiple_targets():
+    osc = DummyOSC()
+    reactor = EmotionReactor(
+        osc_sender=osc,
+        get_target_devices=lambda: [
+            {"name": "sue_1", "node_type": "sue"},
+            {"name": "kait_1", "node_type": "kait"},
+            {"name": "F7OWER_00", "node_type": "sylvie"},
+        ],
+        min_hold_ms=0,
+        command_cooldown_ms=1,
+    )
+
+    perception = {"vit_emotion": {"dominant": "happy", "confidence": 0.95, "scores": [0.0] * 7}}
+    reactor.update(perception=perception, has_face=True)
+    reactor.update(perception=perception, has_face=True)
+
+    targets = {item["target"] for item in osc.sent}
+    assert "sue_1" in targets
+    assert "kait_1" in targets
+    assert "F7OWER_00" in targets
+
+
+def test_sylvie_soothe_vs_rest_mapping():
+    osc = DummyOSC()
+    reactor = EmotionReactor(
+        osc_sender=osc,
+        get_target_devices=lambda: [{"name": "F7OWER_00", "node_type": "sylvie"}],
+    )
+
+    soothe = reactor._command_for("sylvie", "SOOTHE")
+    rest = reactor._command_for("sylvie", "REST")
+    assert soothe == ("/preset", [4])
+    assert rest == ("/preset", [3])
+
+

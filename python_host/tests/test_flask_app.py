@@ -142,6 +142,45 @@ class TestFlaskAPI:
         assert devices.status_code == 200
         data = json.loads(devices.data)
         assert "devices" in data
+        assert "emotion_targets" in data
+
+    def test_api_devices_emotion_targets(self, client):
+        client.post(
+            "/api/osc/target",
+            data=json.dumps({"name": "sue_1", "ip": "127.0.0.1", "port": 8888, "node_type": "sue"}),
+            content_type="application/json",
+        )
+        client.post(
+            "/api/osc/target",
+            data=json.dumps({"name": "kait_1", "ip": "127.0.0.2", "port": 8888, "node_type": "kait"}),
+            content_type="application/json",
+        )
+
+        resp = client.post(
+            "/api/devices/emotion_targets",
+            data=json.dumps({"names": ["sue_1"]}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "ok"
+        assert "sue_1" in data["names"]
+
+    def test_api_reactor_override_get_post(self, client):
+        got = client.get("/api/reactor/override")
+        assert got.status_code == 200
+        got_data = json.loads(got.data)
+        assert got_data["status"] == "ok"
+        assert "enabled" in got_data
+
+        upd = client.post(
+            "/api/reactor/override",
+            data=json.dumps({"enabled": False}),
+            content_type="application/json",
+        )
+        assert upd.status_code == 200
+        upd_data = json.loads(upd.data)
+        assert upd_data["enabled"] is False
 
     def test_api_scan_mdns_with_mock(self, client, monkeypatch):
         monkeypatch.setattr(

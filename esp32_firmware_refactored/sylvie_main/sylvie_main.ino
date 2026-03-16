@@ -51,6 +51,11 @@ bool autoMode = true;
 unsigned long lastAutoUpdate = 0;
 // unsigned long lastClientScan = 0;
 int autoState = 0;
+int activePreset = 3;
+bool preset2BlinkOn = false;
+bool preset2MotorFlip = false;
+unsigned long preset2NextLedMs = 0;
+unsigned long preset2NextMotorMs = 0;
 
 // --- PWM Configuration for L298N motors / L298N 电机 PWM 配置 ---
 const int PWM_FREQ       = 1000;  // 1 kHz PWM frequency / PWM 频率
@@ -73,6 +78,8 @@ void printSelfInfo();
 void handleSerialCommand();
 void sendClientListOSC(OSCMessage &msg, int addrOffset);
 void sendSelfInfoOSC(OSCMessage &msg, int addrOffset);
+void tickPreset2Pattern();
+void resetPreset2Pattern();
 // ────────────────────────────────────────────────────────────
 
 // ============================================================
@@ -255,6 +262,7 @@ void handleSerialCommand() {
 void setup() {
   Serial.begin(115200);
   memset(clients, 0, sizeof(clients));
+  randomSeed((uint32_t)esp_random());
 
   // Initialize motor pins with LEDC PWM / 用 LEDC PWM 初始化电机引脚
   ledcAttach(M1_A, PWM_FREQ, PWM_RESOLUTION);
@@ -300,6 +308,7 @@ void loop() {
   }
 
   handleSerialCommand();
+  tickPreset2Pattern();
 
   if (autoMode) runAutoMode();
 }
@@ -325,6 +334,7 @@ void routeAuto(OSCMessage &msg, int addrOffset) {
 
 void routeMotor1(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
+    activePreset = 0;
     int dir = msg.getInt(0);
     int speed = 255;  // Default full speed / 默认全速
     if (msg.isInt(1)) speed = msg.getInt(1);
@@ -335,6 +345,7 @@ void routeMotor1(OSCMessage &msg, int addrOffset) {
 
 void routeMotor2(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
+    activePreset = 0;
     int dir = msg.getInt(0);
     int speed = 255;  // Default full speed / 默认全速
     if (msg.isInt(1)) speed = msg.getInt(1);
@@ -345,6 +356,7 @@ void routeMotor2(OSCMessage &msg, int addrOffset) {
 
 void routeLED1(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0) && msg.isInt(1) && msg.isInt(2)) {
+    activePreset = 0;
     int r = msg.getInt(0), g = msg.getInt(1), b = msg.getInt(2);
     setLED(1, r, g, b);
     Serial.printf("LED1: R=%d G=%d B=%d\n", r, g, b);
@@ -353,6 +365,7 @@ void routeLED1(OSCMessage &msg, int addrOffset) {
 
 void routeLED2(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0) && msg.isInt(1) && msg.isInt(2)) {
+    activePreset = 0;
     int r = msg.getInt(0), g = msg.getInt(1), b = msg.getInt(2);
     setLED(2, r, g, b);
     Serial.printf("LED2: R=%d G=%d B=%d\n", r, g, b);
@@ -397,6 +410,41 @@ void runAutoMode() {
   }
 }
 
+void resetPreset2Pattern() {
+  preset2BlinkOn = false;
+  preset2MotorFlip = false;
+  preset2NextLedMs = 0;
+  preset2NextMotorMs = 0;
+}
+
+void tickPreset2Pattern() {
+  if (activePreset != 2) return;
+
+  unsigned long now = millis();
+
+  // Blink both LEDs in red with short jitter for a stressed signal.
+  if (preset2NextLedMs == 0 || now >= preset2NextLedMs) {
+    preset2BlinkOn = !preset2BlinkOn;
+    int red = preset2BlinkOn ? 255 : 32;
+    setLED(1, red, 0, 0);
+    setLED(2, red, 0, 0);
+    preset2NextLedMs = now + (unsigned long)random(140, 421);
+  }
+
+  // Alternate motor directions with random 300-1500ms twitch interval.
+  if (preset2NextMotorMs == 0 || now >= preset2NextMotorMs) {
+    preset2MotorFlip = !preset2MotorFlip;
+    if (preset2MotorFlip) {
+      setMotor(1, -1, 255);
+      setMotor(2, 1, 255);
+    } else {
+      setMotor(1, 1, 255);
+      setMotor(2, -1, 255);
+    }
+    preset2NextMotorMs = now + (unsigned long)random(300, 1501);
+  }
+}
+
 // ============================================================
 // 硬件控制
 // ============================================================
@@ -423,22 +471,37 @@ void setLED(int led, int r, int g, int b) {
 }
 
 void setPreset(int preset) {
+  activePreset = preset;
   switch (preset) {
     case 1:
+      resetPreset2Pattern();
       setLED(1, 255, 255, 0); setLED(2, 0, 0, 0);
       setMotor(1, 1, 255);    setMotor(2, -1, 255);
       break;
     case 2:
-      setLED(1, 0, 0, 0);    setLED(2, 0, 255, 255);
-      setMotor(1, -1, 255);   setMotor(2, 1, 255);
+      resetPreset2Pattern();
+      preset2NextLedMs = millis();
+      preset2NextMotorMs = millis();
+      break;
+    case 4:
+      resetPreset2Pattern();
+      setLED(1, 36, 0, 54);   setLED(2, 24, 0, 42);
+      setMotor(1, -1, 170);   setMotor(2, 1, 170);
       break;
     case 3:
+      resetPreset2Pattern();
+      stopAll();
+      break;
+    default:
+      resetPreset2Pattern();
       stopAll();
       break;
   }
 }
 
 void stopAll() {
+  activePreset = 3;
+  resetPreset2Pattern();
   setMotor(1, 0, 0); setMotor(2, 0, 0);
   setLED(1, 0, 0, 0); setLED(2, 0, 0, 0);
 }

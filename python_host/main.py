@@ -36,6 +36,13 @@ def main():
     app_module._selected_device = "sylvie_1"
     app_module._set_camera_index(args.camera)
 
+    # Auto-discover LAN devices once at startup for showcase flow.
+    try:
+        discovered = app_module._scan_and_register_devices(mode="auto", timeout_sec=1.2, gateway_ip=args.esp, gateway_port=8888)
+        print(f"Startup scan complete: {len(discovered)} device(s) discovered")
+    except Exception as exc:
+        print(f"Startup scan failed: {exc}")
+
     # Camera remains OFF by default. Opt-in only.
     if args.camera_autostart and not args.no_camera:
         ok, detail = app_module._start_camera(index=args.camera)
