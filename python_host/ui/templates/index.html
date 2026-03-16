@@ -108,6 +108,9 @@
   let sylvieManualArmed = false;
   let sylvieDrivePadState = { active: false, x: 0, y: 0 };
   let lastMotorSendAt = { 1: 0, 2: 0 };
+  const SYLVIE_DEADBAND = 20;
+  const SYLVIE_MIN_EFFECTIVE = 150;
+  const SYLVIE_SEND_INTERVAL_MS = 40;
 
   async function getJSON(url) {
     const r = await fetch(url);
@@ -239,32 +242,34 @@
       holder.innerHTML = `
         <div class="flex gap-2 items-center">
           <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/auto',[1])">Auto ON</button>
-          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="setSylvieManualMode()">Manual</button>
-          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sylvieStopAll()">STOP</button>
+          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/auto',[0])">Manual</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/stop)">STOP</button>
         </div>
 
         <div class="bg-slate-900 rounded p-2">
           <div class="mb-1 text-xs text-slate-400">Motor 1 (Reverse <-> Stop <-> Forward)</div>
           <input id="sylvieMotor1" type="range" min="-255" max="255" value="0" class="w-full"
             oninput="sendSylvieMotorFromSlider(1, this.value)">
-          <div id="sylvieMotor1Text" class="text-xs text-slate-400">0 (stop)</div>
+          <div id="sylvieMotor1Text" class="text-xs text-slate-400">0 (stop) | deadband 25 | min drive 150</div>
         </div>
 
         <div class="bg-slate-900 rounded p-2">
           <div class="mb-1 text-xs text-slate-400">Motor 2 (Reverse <-> Stop <-> Forward)</div>
           <input id="sylvieMotor2" type="range" min="-255" max="255" value="0" class="w-full"
             oninput="sendSylvieMotorFromSlider(2, this.value)">
-          <div id="sylvieMotor2Text" class="text-xs text-slate-400">0 (stop)</div>
+          <div id="sylvieMotor2Text" class="text-xs text-slate-400">0 (stop) | deadband 25 | min drive 150</div>
         </div>
 
         <div class="bg-slate-900 rounded p-2">
-          <div class="mb-1 text-xs text-slate-400">2D Drive Pad (Y: forward/reverse, X: turn)</div>
+          <div class="mb-1 text-xs text-slate-400">Flower Pad (X: Motor1, Y: Motor2)</div>
           <div id="sylviePadWrap" class="w-full" style="max-width:320px;">
-            <div id="sylvieDrivePad" class="bg-slate-700 rounded" style="position:relative; width:100%; aspect-ratio:1/1; touch-action:none;">
-              <div id="sylviePadDot" class="bg-emerald-600 rounded" style="position:absolute; width:14px; height:14px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+            <div id="sylvieDrivePad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:100%; aspect-ratio:1/1; touch-action:none;">
+              <div class="crosshair-h" style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div class="crosshair-v" style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div id="sylviePadDot" class="bg-emerald-500 border border-emerald-300 rounded-full shadow" style="position:absolute; width:16px; height:16px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
             </div>
           </div>
-          <div id="sylviePadText" class="text-xs text-slate-400 mt-2">x=0.00 y=0.00</div>
+          <div id="sylviePadText" class="text-xs text-slate-400 mt-2 font-mono">X=0.00 Y=0.00 | M1:0 M2:0</div>
         </div>
 
         ${ledCard(1)}
@@ -272,6 +277,7 @@
         <div class="flex gap-2">
           <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/preset',[1])">Preset 1</button>
           <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/preset',[2])">Preset 2</button>
+          <button class="bg-violet-600 hover:bg-violet-500 rounded px-3 py-1" onclick="sendRaw('/preset',[3])">Preset 3</button>
         </div>
       `;
       initSylvieDrivePad();
@@ -526,6 +532,143 @@
 
     const baudInput = document.getElementById('serialBaud');
     if (baudInput && s.baud) baudInput.value = s.baud;
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  function mapSylvieEffective(rawValue) {
+    const v = clamp(parseInt(rawValue, 10) || 0, -255, 255);
+    const absV = Math.abs(v);
+    if (absV <= SYLVIE_DEADBAND) return 0;
+    if (absV < SYLVIE_MIN_EFFECTIVE) return v > 0 ? SYLVIE_MIN_EFFECTIVE : -SYLVIE_MIN_EFFECTIVE;
+    return v;
+  }
+
+  function motorCmdFromSigned(rawValue, useSnap = false) {
+    const raw = clamp(parseInt(rawValue, 10) || 0, -255, 255);
+    const effective = useSnap ? mapSylvieEffective(raw) : raw;
+    if (effective > 0) return { raw, effective, dir: 1, speed: 255 };
+    if (effective < 0) return { raw, effective, dir: -1, speed: 255 };
+    return { raw, effective: 0, dir: 0, speed: 255 };
+  }
+
+  async function setSylvieManualMode() {
+    if (!sylvieManualArmed) {
+      await sendRaw('/auto', [0]);
+    }
+    sylvieManualArmed = true;
+  }
+
+  function updateSylvieMotorText(id, cmd) {
+    const el = document.getElementById(`sylvieMotor${id}Text`);
+    if (!el) return;
+    if (cmd.dir === 0) {
+      el.textContent = `${cmd.raw} -> stop (/motor${id} [0,255])`;
+      return;
+    }
+    const dirText = cmd.dir > 0 ? 'forward' : 'reverse';
+    const snapText = cmd.effective !== cmd.raw ? ' (snapped)' : '';
+    el.textContent = `${cmd.raw} -> ${dirText} (/motor${id} [${cmd.dir},255])${snapText}`;
+  }
+
+  async function sendSylvieMotorSigned(id, signedValue, force = false, useSnap = false) {
+    await setSylvieManualMode();
+    const now = Date.now();
+    if (!force && now - (lastMotorSendAt[id] || 0) < SYLVIE_SEND_INTERVAL_MS) return;
+    lastMotorSendAt[id] = now;
+
+    const cmd = motorCmdFromSigned(signedValue, useSnap);
+    await sendRaw(`/motor${id}`, [cmd.dir, cmd.speed]);
+    updateSylvieMotorText(id, cmd);
+  }
+
+  async function sendSylvieMotorFromSlider(id, rawValue) {
+    await sendSylvieMotorSigned(id, rawValue);
+  }
+
+  function setSylviePadDot(x, y) {
+    const dot = document.getElementById('sylviePadDot');
+    const txt = document.getElementById('sylviePadText');
+    if (dot) {
+      dot.style.left = `${(x + 1) * 50}%`;
+      dot.style.top = `${(1 - y) * 50}%`;
+    }
+    if (txt) {
+      const m1 = mapSylvieEffective(Math.round(x * 255));
+      const m2 = mapSylvieEffective(Math.round(y * 255));
+      txt.textContent = `X=${x.toFixed(2)} Y=${y.toFixed(2)} | M1:${m1} M2:${m2}`;
+    }
+  }
+
+  async function sendSylvieFromPad(x, y, force = false) {
+    // Per requested protocol: X controls motor1, Y controls motor2.
+    const m1 = clamp(Math.round(x * 255), -255, 255);
+    const m2 = clamp(Math.round(y * 255), -255, 255);
+
+    const s1 = document.getElementById('sylvieMotor1');
+    const s2 = document.getElementById('sylvieMotor2');
+    if (s1) s1.value = `${m1}`;
+    if (s2) s2.value = `${m2}`;
+
+    await Promise.all([
+      sendSylvieMotorSigned(1, m1, force, true),
+      sendSylvieMotorSigned(2, m2, force, true),
+    ]);
+  }
+
+  function initSylvieDrivePad() {
+    const pad = document.getElementById('sylvieDrivePad');
+    if (!pad) return;
+
+    const updateFromPointer = async (clientX, clientY, force = false) => {
+      const rect = pad.getBoundingClientRect();
+      const nx = clamp(((clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
+      const ny = clamp(1 - ((clientY - rect.top) / rect.height) * 2, -1, 1);
+      sylvieDrivePadState.x = nx;
+      sylvieDrivePadState.y = ny;
+      setSylviePadDot(nx, ny);
+      await sendSylvieFromPad(nx, ny, force);
+    };
+
+    pad.onpointerdown = async (ev) => {
+      sylvieDrivePadState.active = true;
+      pad.setPointerCapture(ev.pointerId);
+      await updateFromPointer(ev.clientX, ev.clientY, true);
+    };
+
+    pad.onpointermove = async (ev) => {
+      if (!sylvieDrivePadState.active) return;
+      await updateFromPointer(ev.clientX, ev.clientY, false);
+    };
+
+    const release = async () => {
+      if (!sylvieDrivePadState.active) return;
+      sylvieDrivePadState.active = false;
+      sylvieDrivePadState.x = 0;
+      sylvieDrivePadState.y = 0;
+      setSylviePadDot(0, 0);
+      await sendSylvieFromPad(0, 0, true);
+    };
+
+    pad.onpointerup = release;
+    pad.onpointercancel = release;
+    setSylviePadDot(0, 0);
+  }
+
+  async function sylvieStopAll() {
+    const s1 = document.getElementById('sylvieMotor1');
+    const s2 = document.getElementById('sylvieMotor2');
+    if (s1) s1.value = '0';
+    if (s2) s2.value = '0';
+    sylvieDrivePadState = { active: false, x: 0, y: 0 };
+    setSylviePadDot(0, 0);
+    await Promise.all([
+      sendRaw('/preset', [3]),
+      sendSylvieMotorSigned(1, 0, true),
+      sendSylvieMotorSigned(2, 0, true),
+    ]);
   }
 
   // ...existing code...
