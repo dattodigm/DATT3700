@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import type { MotionSequence } from "@/lib/types";
 
-// In-memory storage for demo
+// In-memory storage for demo (not exported)
 const savedSequences: MotionSequence[] = [];
+
+export async function GET() {
+  return NextResponse.json({ sequences: savedSequences });
+}
 
 export async function POST(request: Request) {
   const sequence: MotionSequence = await request.json();
@@ -20,5 +24,3 @@ export async function POST(request: Request) {
   
   return NextResponse.json({ success: true, sequence });
 }
-
-export { savedSequences };
