@@ -12,9 +12,9 @@ export async function fetchJSON<T>(url: string): Promise<T> {
   return res.json();
 }
 
-export async function postJSON<T>(
+export async function postJSON<T, D = unknown>(
   url: string,
-  data?: Record<string, unknown>
+  data?: D
 ): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
