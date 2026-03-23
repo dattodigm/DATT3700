@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <title>Adafruit 电子眼 1:1 固件级渲染器 (Final V2)</title>
+        <style>
+            :root {
+                --bg: #121212;
+                --panel: #1e1e1e;
+                --accent: #00d2ff;
+                --text: #e0e0e0;
+            }
+            body {
+                font-family: "Segoe UI", Tahoma, sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                margin: 0;
+                display: flex;
+                height: 100vh;
+                overflow: hidden;
+            }
+
+            #left {
+                width: 30%;
+                display: flex;
+                flex-direction: column;
+                border-right: 1px solid #333;
+                background: #181818;
+            }
+            .header {
+                padding: 12px 15px;
+                background: #222;
+                border-bottom: 1px solid #333;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                font-size: 14px;
+            }
+            textarea {
+                flex-grow: 1;
+                background: #181818;
+                color: #569cd6;
+                border: none;
+                padding: 15px;
+                font-family: "Consolas", monospace;
+                font-size: 12px;
+                resize: none;
+                outline: none;
+            }
+            .btn {
+                background: var(--accent);
+                color: #000;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 12px;
+                transition: 0.2s;
+            }
+            .btn:hover {
+                background: #5ce1e6;
+            }
+
+            #mid {
+                width: 30%;
+                background: var(--panel);
+                border-right: 1px solid #333;
+                display: flex;
+                flex-direction: column;
+            }
+            #layerList {
+                flex-grow: 1;
+                overflow-y: auto;
+                padding: 10px;
+            }
+
+            .layer-card {
+                background: #2d2d2d;
+                padding: 10px;
+                margin-bottom: 10px;
+                border-radius: 6px;
+                border-left: 4px solid #555;
+                position: relative;
+            }
+            .layer-card.active {
+                border-left-color: var(--accent);
+                background: #333;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            }
+            .drag-handle {
+                cursor: grab;
+                color: #888;
+                margin-right: 5px;
+                font-size: 16px;
+                user-select: none;
+            }
+
+            .params {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                font-size: 11px;
+                color: #aaa;
+                margin-top: 8px;
+            }
+            .params label {
+                display: flex;
+                flex-direction: column;
+            }
+            .params select {
+                background: #111;
+                color: #fff;
+                border: 1px solid #444;
+                padding: 4px;
+                border-radius: 3px;
+                font-family: monospace;
+                margin-top: 3px;
+            }
+
+            #right {
+                flex-grow: 1;
+                display: flex;
+                flex-direction: column;
+                background: #0a0a0a;
+                position: relative;
+            }
+            .fw-controls {
+                padding: 15px;
+                background: #222;
+                border-bottom: 1px solid #333;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 15px;
+                font-size: 12px;
+            }
+            .fw-controls label {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+            }
+            .fw-controls input[type="range"] {
+                width: 100%;
+                cursor: pointer;
+            }
+            .fw-controls input[type="number"],
+            .fw-controls input[type="color"] {
+                background: #111;
+                color: #fff;
+                border: 1px solid #444;
+                padding: 3px;
+                border-radius: 3px;
+            }
+
+            .canvas-bg {
+                flex-grow: 1;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                background: repeating-conic-gradient(
+                        #1a1a1a 0% 25%,
+                        #222 0% 25% 50%
+                    )
+                    50% / 20px 20px;
+                overflow: hidden;
+                position: relative;
+            }
+            .screen-container {
+                position: relative;
+                box-shadow:
+                    0 10px 40px rgba(0, 0, 0, 0.9),
+                    inset 0 0 20px rgba(0, 0, 0, 0.9);
+                border: 2px solid #555;
+                overflow: hidden;
+                background: #000;
+            }
+            canvas {
+                display: block;
+                image-rendering: pixelated;
+            }
+
+            .status-bar {
+                padding: 8px;
+                background: var(--accent);
+                color: #000;
+                font-size: 12px;
+                text-align: center;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="left">
+            <div class="header">
+                <span>C/C++ Header (.h)</span>
+                <button class="btn" onclick="parseCode()">编译并解析 🚀</button>
+            </div>
+            <textarea
+                id="codeInput"
+                placeholder="粘贴含有 sclera, polar/iris, upper, lower 的代码..."
+            ></textarea>
+        </div>
+
+        <div id="mid">
+            <div class="header" style="font-size: 13px; color: #ccc">
+                内存图层挂载 (拖拽 ☰ 排序)
+            </div>
+            <div id="layerList"></div>
+        </div>
+
+        <div id="right">
+            <div class="fw-controls">
+                <label
+                    >硬件 LCD 屏幕分辨率:
+                    <div style="display: flex; gap: 5px; align-items: center">
+                        <input
+                            type="number"
+                            id="lcdW"
+                            value="160"
+                            style="width: 50px"
+                            onchange="updateScreen()"
+                        />
+                        x
+                        <input
+                            type="number"
+                            id="lcdH"
+                            value="160"
+                            style="width: 50px"
+                            onchange="updateScreen()"
+                        />
+                        <input
+                            type="checkbox"
+                            id="centerViewport"
+                            checked
+                            onchange="updateScreen()"
+                        />
+                        居中逻辑视口
+                    </div>
+                </label>
+                <label
+                    >眼睑(皮肤)底色:
+                    <input
+                        type="color"
+                        id="skinColor"
+                        value="#000000"
+                        onchange="drawComposite()"
+                    />
+                </label>
+
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>眼球 X 轴偏移 (Gaze X)</span>
+                        <span id="valGx">0 px</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="gazeX"
+                        min="-50"
+                        max="50"
+                        value="0"
+                        oninput="updateVal(this, 'valGx', ' px'); drawComposite()"
+                    />
+                </label>
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>眼球 Y 轴偏移 (Gaze Y)</span>
+                        <span id="valGy">0 px</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="gazeY"
+                        min="-50"
+                        max="50"
+                        value="0"
+                        oninput="updateVal(this, 'valGy', ' px'); drawComposite()"
+                    />
+                </label>
+
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>眨眼开合度 (Blink)</span>
+                        <span id="valBlink">100%</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="blinkOpen"
+                        min="0.0"
+                        max="1.0"
+                        step="0.01"
+                        value="1.0"
+                        oninput="updateVal(this, 'valBlink', '%', true); drawComposite()"
+                    />
+                </label>
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>虹膜外圈尺寸 (Iris Scale)</span>
+                        <span id="valIrisScale">0.5</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="irisScale"
+                        min="0.1"
+                        max="1.5"
+                        step="0.05"
+                        value="0.5"
+                        oninput="updateVal(this, 'valIrisScale', ''); drawComposite()"
+                    />
+                </label>
+
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>瞳孔内圈大小 (Pupil Size)</span>
+                        <span id="valPupil">0.5</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="pupilScale"
+                        min="0.1"
+                        max="0.9"
+                        step="0.01"
+                        value="0.5"
+                        oninput="updateVal(this, 'valPupil', ''); drawComposite()"
+                    />
+                </label>
+                <label>
+                    <div style="display: flex; justify-content: space-between">
+                        <span>瞳孔形状 (1=圆, <1=猫眼)</span>
+                        <span id="valSlit">1.0</span>
+                    </div>
+                    <input
+                        type="range"
+                        id="slitScale"
+                        min="0.5"
+                        max="1.0"
+                        step="0.05"
+                        value="1.0"
+                        oninput="updateVal(this, 'valSlit', ''); drawComposite()"
+                    />
+                </label>
+
+                <label style="grid-column: span 2;">
+                    <div style="display: flex; align-items: center; gap: 8px; background: #111; padding: 5px; border-radius: 4px; border: 1px solid #444;">
+                        <input type="checkbox" id="autoAnimate" onchange="toggleAnimate()" />
+                        <b style="color: var(--accent)">开启自动物理动画</b>
+
+                        <span style="margin-left: 10px;">动画倍速:</span>
+                        <input type="range" id="animSpeed" min="0.1" max="5.0" step="0.1" value="1.0" style="width: 80px;" oninput="updateVal(this, 'valAnimSpeed', 'x')" />
+                        <span id="valAnimSpeed" style="width: 30px; text-align:right;">1.0x</span>
+
+                        <input type="range" id="globalZoom" min="1" max="4" step="0.1" value="2.5" oninput="updateScreen()" style="width: 60px; margin-left: auto" title="全局放大" />
+                    </div>
+                </label>
+            </div>
+            <div class="canvas-bg">
+                <div class="screen-container" id="screenCont">
+                    <canvas id="cvs" width="160" height="160"></canvas>
+                </div>
+            </div>
+            <div class="status-bar" id="status">等待解析...</div>
+        </div>
+
+        <script>
+            let parsedLayers = [];
+            let macroDefines = {};
+            let draggedIndex = null;
+            let animFrameId = null;
+
+            const cvs = document.getElementById("cvs");
+            const ctx = cvs.getContext("2d");
+
+            function updateVal(el, textId, suffix, isPercent = false) {
+                document.getElementById(textId).innerText =
+                    (isPercent ? Math.round(el.value * 100) : el.value) +
+                    suffix;
+            }
+
+            function updateScreen() {
+                const w = document.getElementById("lcdW").value;
+                const h = document.getElementById("lcdH").value;
+                const zoom = document.getElementById("globalZoom").value;
+                cvs.width = w;
+                cvs.height = h;
+                document.getElementById("screenCont").style.width =
+                    w * zoom + "px";
+                document.getElementById("screenCont").style.height =
+                    h * zoom + "px";
+                cvs.style.width = "100%";
+                cvs.style.height = "100%";
+                document.getElementById("screenCont").style.borderRadius =
+                    w == h ? "50%" : "10%";
+                drawComposite();
+            }
+            updateScreen();
+
+            function evalMath(str, macros) {
+                try {
+                    let replaced = str.replace(/[A-Za-z0-9_]+/g, (m) =>
+                        macros[m] !== undefined ? macros[m] : isNaN(m) ? 1 : m,
+                    );
+                    return Function('"use strict";return (' + replaced + ")")();
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function decodeRGB565(val) {
+                return {
+                    r: (((val >> 11) & 0x1f) * 255) / 31,
+                    g: (((val >> 5) & 0x3f) * 255) / 63,
+                    b: ((val & 0x1f) * 255) / 31,
+                };
+            }
+
+            function parseCode() {
+                const code = document.getElementById("codeInput").value;
+                if (!code.trim()) return alert("无代码！");
+
+                parsedLayers = [];
+                macroDefines = {};
+
+                const defRegex =
+                    /#define\s+([A-Za-z0-9_]+)\s+([0-9a-fA-FxX]+|\d+)/g;
+                let m;
+                while ((m = defRegex.exec(code)) !== null) {
+                    macroDefines[m[1]] = parseInt(m[2]);
+                }
+
+
+                // Auto-update LCD resolution if SCREEN_WIDTH/HEIGHT are defined
+                if (macroDefines["SCREEN_WIDTH"] && macroDefines["SCREEN_HEIGHT"]) {
+                    document.getElementById("lcdW").value = macroDefines["SCREEN_WIDTH"];
+                    document.getElementById("lcdH").value = macroDefines["SCREEN_HEIGHT"];
+                    updateScreen();
+                }
+
+                const arrRegex =
+                    /(?:const\s+)?(uint\d+_t|unsigned\s+char|unsigned\s+short)\s+([A-Za-z0-9_]+)\s*\[\s*([^\]]+)\s*\][^=]*=\s*\{([\s\S]*?)\}/g;
+
+                while ((m = arrRegex.exec(code)) !== null) {
+                    const typeStr = m[1],
+                        name = m[2],
+                        bracketStr = m[3],
+                        hexStr = m[4];
+                    const data = (hexStr.match(/0[xX][0-9A-Fa-f]+/g) || []).map(
+                        (x) => parseInt(x, 16),
+                    );
+                    if (data.length === 0) continue;
+
+                    let w = null,
+                        h = null;
+                    if (bracketStr.includes("*")) {
+                        const parts = bracketStr
+                            .split("*")
+                            .map((p) => p.trim());
+                        w = evalMath(parts[0], macroDefines);
+                        h = evalMath(parts[1], macroDefines);
+                        if (
+                            parts[0].includes("HEIGHT") ||
+                            parts[1].includes("WIDTH")
+                        ) {
+                            let t = w;
+                            w = h;
+                            h = t;
+                        }
+                    } else {
+                        const val = evalMath(bracketStr, macroDefines);
+                        w = h = Math.floor(Math.sqrt(val || data.length));
+                    }
+
+                    let renderType = typeStr.includes("16") ? "RGB565" : "MASK";
+                    let enabled = true;
+                    const nLow = name.toLowerCase();
+
+                    if (nLow.includes("polar") || nLow.includes("iris")) {
+                        renderType = "POLAR";
+                        enabled = true;
+                    } else if (nLow.includes("sclera")) renderType = "RGB565";
+                    else if (nLow.includes("upper") || nLow.includes("lower"))
+                        renderType = "THRESHOLD";
+
+                    if (!w || isNaN(w))
+                        w = h = Math.floor(Math.sqrt(data.length));
+
+                    parsedLayers.push({
+                        id: name,
+                        name: name,
+                        type: renderType,
+                        w: w,
+                        h: h,
+                        data: data,
+                        enabled: enabled,
+                    });
+                }
+
+                const getOrder = (n, t) => {
+                    n = n.toLowerCase();
+                    if (n.includes("sclera")) return 1;
+                    if (n.includes("iris") || n.includes("polar")) return 2;
+                    if (t === "THRESHOLD") return 3;
+                    return 4;
+                };
+                parsedLayers.sort(
+                    (a, b) =>
+                        getOrder(a.name, a.type) - getOrder(b.name, b.type),
+                );
+
+                buildUI();
+                drawComposite();
+                document.getElementById("status").innerText =
+                    `✅ 提取完成！提取到 ${parsedLayers.length} 个图层矩阵。`;
+            }
+
+            function buildUI() {
+                const list = document.getElementById("layerList");
+                list.innerHTML = "";
+
+                parsedLayers.forEach((l, i) => {
+                    const div = document.createElement("div");
+                    div.className = `layer-card ${l.enabled ? "active" : ""}`;
+                    div.draggable = true;
+                    div.ondragstart = (e) => {
+                        draggedIndex = i;
+                        e.dataTransfer.effectAllowed = "move";
+                    };
+                    div.ondragover = (e) => {
+                        e.preventDefault();
+                    };
+                    div.ondrop = (e) => {
+                        e.preventDefault();
+                        if (draggedIndex !== null && draggedIndex !== i) {
+                            const item = parsedLayers.splice(
+                                draggedIndex,
+                                1,
+                            )[0];
+                            parsedLayers.splice(i, 0, item);
+                            buildUI();
+                            drawComposite();
+                        }
+                    };
+
+                    div.innerHTML = `
+            <div style="display:flex; align-items:center; color:#fff; font-weight:bold; font-size:14px; margin-bottom:5px;">
+                <span class="drag-handle">☰</span>
+                <input type="checkbox" onchange="parsedLayers[${i}].enabled=this.checked; buildUI(); drawComposite();" ${l.enabled ? "checked" : ""} style="margin-right:8px;">
+                ${l.name} <span style="font-size:10px; color:#888; font-weight:normal; margin-left:5px;">[${l.w}x${l.h}]</span>
+            </div>
+            <div class="params">
+                <label style="grid-column: span 2;">C++ 内存解析模式:
+                    <select onchange="parsedLayers[${i}].type=this.value; drawComposite();">
+                        <option value="RGB565" ${l.type === "RGB565" ? "selected" : ""}>常规图像映射 (Sclera)</option>
+                        <option value="POLAR" ${l.type === "POLAR" ? "selected" : ""}>极坐标反演映射 (Iris)</option>
+                        <option value="THRESHOLD" ${l.type === "THRESHOLD" ? "selected" : ""}>阈值判断遮罩 (Eyelid)</option>
+                    </select>
+                </label>
+            </div>
+        `;
+                    list.appendChild(div);
+                });
+            }
+
+            // 核心渲染还原
+            function drawComposite() {
+                const sw = parseInt(document.getElementById("lcdW").value);
+                const sh = parseInt(document.getElementById("lcdH").value);
+                const useCenter =
+                    document.getElementById("centerViewport").checked;
+
+                const logicalW = macroDefines["SCREEN_WIDTH"] || 128;
+                const logicalH = macroDefines["SCREEN_HEIGHT"] || 128;
+
+                ctx.fillStyle = document.getElementById("skinColor").value;
+                ctx.fillRect(0, 0, sw, sh);
+
+                const skinHex = document.getElementById("skinColor").value;
+                const sr = parseInt(skinHex.substr(1, 2), 16),
+                    sg = parseInt(skinHex.substr(3, 2), 16),
+                    sb = parseInt(skinHex.substr(5, 2), 16);
+
+                const baseIrisRadius = macroDefines["IRIS_HEIGHT"] || 45;
+                const irisScaleUI = parseFloat(document.getElementById("irisScale").value);
+                const irisRadius = baseIrisRadius * irisScaleUI;
+
+                const pScale = parseFloat(document.getElementById("pupilScale").value);
+                const slitScale = parseFloat(document.getElementById("slitScale").value);
+                const pupilRadius = irisRadius * pScale;
+
+                const gx = parseInt(document.getElementById("gazeX").value);
+                const gy = parseInt(document.getElementById("gazeY").value);
+
+                // --- 还原固件 Eyelid Tracking 阈值逻辑 ---
+                let openness = parseFloat(document.getElementById("blinkOpen").value);
+
+                // 模拟固件的 Tracking 采样偏移：默认放松态下，眼皮部分遮挡眼球 (基础阈值大约在 110-130 左右)
+                // gy > 0 意味着视线向下，上眼睑应随之下垂，阈值增大
+                let tracking_uT = 120 + (gy * 1.5);
+                tracking_uT = Math.max(0, Math.min(255, tracking_uT));
+
+                // 混合眨眼差值：openness 从 1.0(放松) -> 0.0(闭合)
+                let s = openness;
+                let uT = Math.floor(tracking_uT * s + 254 * (1.0 - s));
+                // 固件逻辑: 下眼睑与上眼睑呈反向映射 lThreshold = 254 - uThreshold
+                let lT = Math.floor((254 - tracking_uT) * s + 254 * (1.0 - s));
+                // ----------------------------------------
+
+                const screenData = ctx.createImageData(sw, sh);
+                const offsetX = useCenter ? Math.floor((sw - logicalW) / 2) : 0;
+                const offsetY = useCenter ? Math.floor((sh - logicalH) / 2) : 0;
+
+                const scleraLayer = parsedLayers.find(
+                    (l) => l.enabled && l.type === "RGB565",
+                );
+                const polarLayers = parsedLayers.filter(
+                    (l) => l.enabled && l.type === "POLAR",
+                );
+                const maskLayers = parsedLayers.filter(
+                    (l) => l.enabled && l.type === "THRESHOLD",
+                );
+
+                for (let y = 0; y < sh; y++) {
+                    for (let x = 0; x < sw; x++) {
+                        const idx = (y * sw + x) * 4;
+                        let eyeX = x - offsetX;
+                        let eyeY = y - offsetY;
+
+                        if (
+                            eyeX < 0 ||
+                            eyeX >= logicalW ||
+                            eyeY < 0 ||
+                            eyeY >= logicalH
+                        ) {
+                            screenData.data[idx] = sr;
+                            screenData.data[idx + 1] = sg;
+                            screenData.data[idx + 2] = sb;
+                            screenData.data[idx + 3] = 255;
+                            continue;
+                        }
+
+                        let isSkin = false;
+                        for (let m of maskLayers) {
+                            let val = m.data[eyeY * m.w + eyeX] & 0xff;
+                            let nLower = m.name.toLowerCase();
+
+                            // 分离 Upper 和 Lower 遮罩处理，对齐固件逻辑
+                            if (nLower.includes("upper")) {
+                                if (val <= uT) { isSkin = true; break; }
+                            } else if (nLower.includes("lower")) {
+                                if (val <= lT) { isSkin = true; break; }
+                            } else {
+                                // 未指明上下时做保底处理
+                                if (val <= (255 - Math.floor(s * 255))) { isSkin = true; break; }
+                            }
+                        }
+
+                        if (isSkin) {
+                            screenData.data[idx] = sr;
+                            screenData.data[idx + 1] = sg;
+                            screenData.data[idx + 2] = sb;
+                            screenData.data[idx + 3] = 255;
+                            continue;
+                        }
+
+                        let r = 0, g = 0, b = 0;
+
+                        if (scleraLayer) {
+                            let sx =
+                                eyeX -
+                                gx +
+                                Math.floor((scleraLayer.w - logicalW) / 2);
+                            let sy =
+                                eyeY -
+                                gy +
+                                Math.floor((scleraLayer.h - logicalH) / 2);
+                            sx = Math.max(0, Math.min(sx, scleraLayer.w - 1));
+                            sy = Math.max(0, Math.min(sy, scleraLayer.h - 1));
+                            const val =
+                                scleraLayer.data[sy * scleraLayer.w + sx];
+                            const rgb = decodeRGB565(val);
+                            r = rgb.r;
+                            g = rgb.g;
+                            b = rgb.b;
+                        }
+
+                        const cx = logicalW / 2;
+                        const cy = logicalH / 2;
+                        let dy = eyeY - cy - gy;
+                        let dx = eyeX - cx - gx;
+                        let d = Math.sqrt(
+                            (dx / slitScale) * (dx / slitScale) + dy * dy,
+                        );
+
+                        if (polarLayers.length > 0 && d <= irisRadius) {
+                            if (d < pupilRadius) {
+                                // Pupil area: keep transparent (use skin color with full alpha or skip)
+                                screenData.data[idx] = sr;
+                                screenData.data[idx + 1] = sg;
+                                screenData.data[idx + 2] = sb;
+                                screenData.data[idx + 3] = 0; // Transparent alpha
+                            } else {
+                                const pLayer = polarLayers[0];
+                                let theta = Math.atan2(dy, dx);
+                                if (theta < 0) theta += 2 * Math.PI;
+
+                                let px = Math.floor(
+                                    (theta / (2 * Math.PI)) * pLayer.w,
+                                );
+                                let py = Math.floor(
+                                    ((d - pupilRadius) * pLayer.h) /
+                                        (irisRadius - pupilRadius),
+                                );
+                                px = Math.max(0, Math.min(px, pLayer.w - 1));
+                                py = Math.max(0, Math.min(py, pLayer.h - 1));
+
+                                const val = pLayer.data[py * pLayer.w + px];
+                                const rgb = decodeRGB565(val);
+                                r = rgb.r; g = rgb.g; b = rgb.b;
+                            }
+                        }
+
+                        screenData.data[idx] = r;
+                        screenData.data[idx + 1] = g;
+                        screenData.data[idx + 2] = b;
+                        screenData.data[idx + 3] = 255;
+                    }
+                }
+
+                ctx.putImageData(screenData, 0, 0);
+            }
+
+            let animActive = false;
+            let curGx = 0, curGy = 0, targetGx = 0, targetGy = 0;
+            let blinkPhase = 0;
+            let curOpenness = 1.0;
+
+            function toggleAnimate() {
+                animActive = document.getElementById("autoAnimate").checked;
+                if (animActive) requestAnimationFrame(animLoop);
+                else {
+                    document.getElementById("gazeX").value = 0;
+                    document.getElementById("gazeY").value = 0;
+                    document.getElementById("blinkOpen").value = 1.0;
+                    updateVal(document.getElementById("gazeX"), "valGx", " px");
+                    updateVal(document.getElementById("gazeY"), "valGy", " px");
+                    updateVal(
+                        document.getElementById("blinkOpen"),
+                        "valBlink",
+                        "%",
+                        true,
+                    );
+                    drawComposite();
+                }
+            }
+
+            function animLoop() {
+                if (!animActive) return;
+
+                let speed = parseFloat(document.getElementById("animSpeed").value);
+
+                if (Math.random() < 0.03 * speed) {
+                    targetGx = (Math.random() - 0.5) * 60;
+                    targetGy = (Math.random() - 0.5) * 60;
+                }
+                curGx += (targetGx - curGx) * 0.15 * speed;
+                curGy += (targetGy - curGy) * 0.15 * speed;
+
+                if (blinkPhase === 0 && Math.random() < 0.015 * speed) blinkPhase = 1;
+
+                if (blinkPhase === 1) {
+                    curOpenness -= 0.35 * speed;
+                    if (curOpenness <= 0) {
+                        curOpenness = 0;
+                        blinkPhase = 2;
+                    }
+                } else if (blinkPhase === 2) {
+                    curOpenness += 0.2 * speed;
+                    if (curOpenness >= 1.0) {
+                        curOpenness = 1.0;
+                        blinkPhase = 0;
+                    }
+                }
+
+                if (Math.random() < 0.05 * speed) {
+                    let pScale = parseFloat(
+                        document.getElementById("pupilScale").value,
+                    );
+                    let targetP = pScale + (Math.random() - 0.5) * 0.05;
+                    document.getElementById("pupilScale").value = Math.max(
+                        0.1,
+                        Math.min(targetP, 0.6),
+                    );
+                    updateVal(
+                        document.getElementById("pupilScale"),
+                        "valPupil",
+                        "",
+                    );
+                }
+
+                document.getElementById("gazeX").value = curGx;
+                document.getElementById("gazeY").value = curGy;
+                document.getElementById("blinkOpen").value = curOpenness;
+                updateVal(document.getElementById("gazeX"), "valGx", " px");
+                updateVal(document.getElementById("gazeY"), "valGy", " px");
+                updateVal(
+                    document.getElementById("blinkOpen"),
+                    "valBlink",
+                    "%",
+                    true,
+                );
+
+                drawComposite();
+                requestAnimationFrame(animLoop);
+            }
+        </script>
+    </body>
+</html>

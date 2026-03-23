@@ -17,11 +17,11 @@ const char* AP_SSID     = "F7OWER";
 const char* AP_PASSWORD = "12345678";
 
 // --- Station模式配置（连接已有WiFi）---
-const char* STA_SSID     = "F7OWER";
-const char* STA_PASSWORD = "12345678";
+const char* STA_SSID     = "MisAXNet";
+const char* STA_PASSWORD = "AX6000@O26";
 
 // --- mDNS 设备广播名称（局域网内可用 sylvie.local 访问）---
-const char* MDNS_NAME = "F7OWER_00";
+const char* MDNS_NAME = "sylvie_1";
 
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;
@@ -51,9 +51,18 @@ bool autoMode = true;
 unsigned long lastAutoUpdate = 0;
 // unsigned long lastClientScan = 0;
 int autoState = 0;
+int activePreset = 3;
+bool preset2BlinkOn = false;
+bool preset2MotorFlip = false;
+unsigned long preset2NextLedMs = 0;
+unsigned long preset2NextMotorMs = 0;
+
+// --- PWM Configuration for L298N motors / L298N 电机 PWM 配置 ---
+const int PWM_FREQ       = 1000;  // 1 kHz PWM frequency / PWM 频率
+const int PWM_RESOLUTION = 8;     // 8-bit resolution (0-255) / 8 位分辨率
 
 // ── 前向声明 ────────────────────────────────────────────────
-void setMotor(int motor, int direction);
+void setMotor(int motor, int direction, int speed = 255);
 void setLED(int led, int r, int g, int b);
 void setPreset(int preset);
 void stopAll();
@@ -69,6 +78,8 @@ void printSelfInfo();
 void handleSerialCommand();
 void sendClientListOSC(OSCMessage &msg, int addrOffset);
 void sendSelfInfoOSC(OSCMessage &msg, int addrOffset);
+void tickPreset2Pattern();
+void resetPreset2Pattern();
 // ────────────────────────────────────────────────────────────
 
 // ============================================================
@@ -208,13 +219,15 @@ void handleSerialCommand() {
   String line = Serial.readStringUntil('\n');
   line.trim();
   if (line.startsWith("motor1")) {
-    int dir = line.substring(7).toInt();
-    setMotor(1, dir);
-    Serial.printf("电机 A: %d\n", dir);
+    int dir = 0, speed = 255;
+    sscanf(line.c_str(), "motor1 %d %d", &dir, &speed);
+    setMotor(1, dir, speed);
+    Serial.printf("电机 A: dir=%d speed=%d\n", dir, speed);
   } else if (line.startsWith("motor2")) {
-    int dir = line.substring(7).toInt();
-    setMotor(2, dir);
-    Serial.printf("电机 B: %d\n", dir);
+    int dir = 0, speed = 255;
+    sscanf(line.c_str(), "motor2 %d %d", &dir, &speed);
+    setMotor(2, dir, speed);
+    Serial.printf("电机 B: dir=%d speed=%d\n", dir, speed);
   } else if (line.startsWith("led1")) {
     int r, g, b;
     sscanf(line.c_str(), "led1 %d %d %d", &r, &g, &b);
@@ -249,9 +262,17 @@ void handleSerialCommand() {
 void setup() {
   Serial.begin(115200);
   memset(clients, 0, sizeof(clients));
+  randomSeed((uint32_t)esp_random());
 
-  int pins[] = {M1_A, M1_B, M2_A, M2_B, L1_R, L1_G, L1_B_PIN, L2_R, L2_G, L2_B_PIN};
-  for (int p : pins) pinMode(p, OUTPUT);
+  // Initialize motor pins with LEDC PWM / 用 LEDC PWM 初始化电机引脚
+  ledcAttach(M1_A, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M1_B, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M2_A, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttach(M2_B, PWM_FREQ, PWM_RESOLUTION);
+
+  // Initialize LED pins to output mode / 初始化 LED 引脚为输出模式
+  int ledPins[] = {L1_R, L1_G, L1_B_PIN, L2_R, L2_G, L2_B_PIN};
+  for (int p : ledPins) pinMode(p, OUTPUT);
 
   WiFi.onEvent(onWifiEvent);
   setupWiFi();
@@ -263,7 +284,7 @@ void setup() {
 
   udp.begin(OSC_PORT);
   Serial.printf("✅ OSC 监听端口: %d\n", OSC_PORT);
-  Serial.println("📋 串口命令: motor1 1 | motor2 -1 | led1 255 0 0 | led2 0 255 255 | auto 0 | preset 2");
+  Serial.println("📋 串口命令: motor1 1 128 | motor2 -1 255 | led1 255 0 0 | led2 0 255 255 | auto 0 | preset 2");
 }
 
 // ============================================================
@@ -287,6 +308,7 @@ void loop() {
   }
 
   handleSerialCommand();
+  tickPreset2Pattern();
 
   if (autoMode) runAutoMode();
 }
@@ -312,22 +334,29 @@ void routeAuto(OSCMessage &msg, int addrOffset) {
 
 void routeMotor1(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
+    activePreset = 0;
     int dir = msg.getInt(0);
-    setMotor(1, dir);
-    Serial.printf("Motor A: %d\n", dir);
+    int speed = 255;  // Default full speed / 默认全速
+    if (msg.isInt(1)) speed = msg.getInt(1);
+    setMotor(1, dir, speed);
+    Serial.printf("Motor A: dir=%d speed=%d\n", dir, speed);
   }
 }
 
 void routeMotor2(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0)) {
+    activePreset = 0;
     int dir = msg.getInt(0);
-    setMotor(2, dir);
-    Serial.printf("Motor B: %d\n", dir);
+    int speed = 255;  // Default full speed / 默认全速
+    if (msg.isInt(1)) speed = msg.getInt(1);
+    setMotor(2, dir, speed);
+    Serial.printf("Motor B: dir=%d speed=%d\n", dir, speed);
   }
 }
 
 void routeLED1(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0) && msg.isInt(1) && msg.isInt(2)) {
+    activePreset = 0;
     int r = msg.getInt(0), g = msg.getInt(1), b = msg.getInt(2);
     setLED(1, r, g, b);
     Serial.printf("LED1: R=%d G=%d B=%d\n", r, g, b);
@@ -336,6 +365,7 @@ void routeLED1(OSCMessage &msg, int addrOffset) {
 
 void routeLED2(OSCMessage &msg, int addrOffset) {
   if (!autoMode && msg.isInt(0) && msg.isInt(1) && msg.isInt(2)) {
+    activePreset = 0;
     int r = msg.getInt(0), g = msg.getInt(1), b = msg.getInt(2);
     setLED(2, r, g, b);
     Serial.printf("LED2: R=%d G=%d B=%d\n", r, g, b);
@@ -380,15 +410,55 @@ void runAutoMode() {
   }
 }
 
+void resetPreset2Pattern() {
+  preset2BlinkOn = false;
+  preset2MotorFlip = false;
+  preset2NextLedMs = 0;
+  preset2NextMotorMs = 0;
+}
+
+void tickPreset2Pattern() {
+  if (activePreset != 2) return;
+
+  unsigned long now = millis();
+
+  // Blink both LEDs in red with short jitter for a stressed signal.
+  if (preset2NextLedMs == 0 || now >= preset2NextLedMs) {
+    preset2BlinkOn = !preset2BlinkOn;
+    int red = preset2BlinkOn ? 255 : 32;
+    setLED(1, red, 0, 0);
+    setLED(2, red, 0, 0);
+    preset2NextLedMs = now + (unsigned long)random(140, 421);
+  }
+
+  // Alternate motor directions with random 300-1500ms twitch interval.
+  if (preset2NextMotorMs == 0 || now >= preset2NextMotorMs) {
+    preset2MotorFlip = !preset2MotorFlip;
+    if (preset2MotorFlip) {
+      setMotor(1, -1, 255);
+      setMotor(2, 1, 255);
+    } else {
+      setMotor(1, 1, 255);
+      setMotor(2, -1, 255);
+    }
+    preset2NextMotorMs = now + (unsigned long)random(300, 1501);
+  }
+}
+
 // ============================================================
 // 硬件控制
 // ============================================================
-void setMotor(int motor, int direction) {
+// Control the motor with PWM speed / 用 PWM 调速控制电机
+// dir: 1=forward, -1=reverse, 0=stop
+// speed: 0-255 (PWM duty cycle / PWM 占空比)
+void setMotor(int motor, int direction, int speed) {
   int pinA = (motor == 1) ? M1_A : M2_A;
   int pinB = (motor == 1) ? M1_B : M2_B;
-  if (direction > 0)      { digitalWrite(pinA, HIGH); digitalWrite(pinB, LOW);  }
-  else if (direction < 0) { digitalWrite(pinA, LOW);  digitalWrite(pinB, HIGH); }
-  else                    { digitalWrite(pinA, LOW);  digitalWrite(pinB, LOW);  }
+  speed = constrain(speed, 0, 255);
+
+  if (direction > 0)      { ledcWrite(pinA, speed); ledcWrite(pinB, 0);     }
+  else if (direction < 0) { ledcWrite(pinA, 0);     ledcWrite(pinB, speed); }
+  else                    { ledcWrite(pinA, 0);     ledcWrite(pinB, 0);     }
 }
 
 void setLED(int led, int r, int g, int b) {
@@ -401,23 +471,38 @@ void setLED(int led, int r, int g, int b) {
 }
 
 void setPreset(int preset) {
+  activePreset = preset;
   switch (preset) {
     case 1:
+      resetPreset2Pattern();
       setLED(1, 255, 255, 0); setLED(2, 0, 0, 0);
-      setMotor(1, 1);         setMotor(2, -1);
+      setMotor(1, 1, 255);    setMotor(2, -1, 255);
       break;
     case 2:
-      setLED(1, 0, 0, 0);    setLED(2, 0, 255, 255);
-      setMotor(1, -1);        setMotor(2, 1);
+      resetPreset2Pattern();
+      preset2NextLedMs = millis();
+      preset2NextMotorMs = millis();
+      break;
+    case 4:
+      resetPreset2Pattern();
+      setLED(1, 36, 0, 54);   setLED(2, 24, 0, 42);
+      setMotor(1, -1, 170);   setMotor(2, 1, 170);
       break;
     case 3:
+      resetPreset2Pattern();
+      stopAll();
+      break;
+    default:
+      resetPreset2Pattern();
       stopAll();
       break;
   }
 }
 
 void stopAll() {
-  setMotor(1, 0); setMotor(2, 0);
+  activePreset = 3;
+  resetPreset2Pattern();
+  setMotor(1, 0, 0); setMotor(2, 0, 0);
   setLED(1, 0, 0, 0); setLED(2, 0, 0, 0);
 }
 

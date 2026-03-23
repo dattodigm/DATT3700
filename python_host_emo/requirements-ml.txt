@@ -1,0 +1,8 @@
+# ML perception extras (optional)
+-r requirements.txt
+mediapipe>=0.10.14,<0.11
+deepface>=0.0.93,<0.1
+tf-keras>=2.16,<3.0
+transformers>=4.30.0
+torch>=2.0.0
+av>=11.0.0

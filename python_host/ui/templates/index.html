@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DATT3700 Multi-Node Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='panel-fallback.css') }}">
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between">
+    <h1 class="text-xl font-bold tracking-wide">DATT3700 Flower Control</h1>
+    <div class="text-sm text-slate-400" id="connStatus">No device selected</div>
+  </header>
+
+  <div class="p-4 grid grid-cols-1 xl:grid-cols-2 gap-4 max-w-7xl mx-auto">
+    <section class="space-y-4">
+      <div class="bg-slate-800 rounded-2xl overflow-hidden shadow-xl">
+        <img id="videoFeed" src="" class="w-full aspect-video object-cover bg-slate-950" alt="Live feed">
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-2">Camera</h2>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <select id="cameraSelect" aria-label="Camera device" class="bg-slate-700 rounded px-2 py-1 text-sm w-36"></select>
+          <button id="startCamera" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm font-semibold">Start</button>
+          <button id="stopCamera" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Stop</button>
+          <span id="cameraStatus" class="text-xs text-slate-400">Camera: off</span>
+        </div>
+        <h2 class="text-sm font-semibold text-slate-400 mb-2">Primary Face</h2>
+        <div id="faceInfo" class="font-mono text-slate-300">Camera is off</div>
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-slate-400">Flower Emotion</span>
+            <span id="flowerEmotionSource" class="text-slate-500">source: -</span>
+          </div>
+          <div class="mt-1 flex items-center justify-between">
+            <span id="flowerEmotionBadge" class="inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold bg-slate-700 text-slate-100">REST .</span>
+            <span id="flowerEmotionStability" class="text-xs text-slate-400">0%</span>
+          </div>
+          <div class="mt-2 h-2 w-full rounded bg-slate-700 overflow-hidden">
+            <div id="flowerEmotionBar" class="h-2 bg-slate-400" style="width:0%"></div>
+          </div>
+        </div>
+
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between text-xs mb-2">
+            <span class="text-slate-400">Real-Time Emotion Analysis Table</span>
+            <span id="emotionModelTag" class="text-slate-500">model: -</span>
+          </div>
+          <div class="overflow-x-auto max-h-40">
+            <table class="w-full text-xs">
+              <thead class="text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th class="text-left py-1 pr-2">Emotion</th>
+                  <th class="text-right py-1 pr-2">Score</th>
+                  <th class="text-left py-1">Bar</th>
+                </tr>
+              </thead>
+              <tbody id="emotionTableBody" class="text-slate-300"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="mt-3 bg-slate-900 rounded p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-slate-400">Emotion Reactor Tuning</span>
+            <span id="reactorConfigStatus" class="text-xs text-slate-500">runtime</span>
+          </div>
+          <div class="flex flex-wrap gap-2 mb-2">
+            <button id="modeSafe" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-xs">Safe</button>
+            <button id="modeBalanced" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-xs">Balanced</button>
+            <button id="modeDramatic" class="bg-rose-600 hover:bg-rose-500 rounded px-3 py-1 text-xs">Dramatic</button>
+            <span id="showcaseModeStatus" class="text-xs text-slate-500 self-center">Mode: Balanced</span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+            <label class="text-slate-300">Enter Threshold <span id="reactorEnterVal" class="text-slate-500"></span>
+              <input id="reactorEnter" type="range" min="0.6" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Exit Threshold <span id="reactorExitVal" class="text-slate-500"></span>
+              <input id="reactorExit" type="range" min="0.2" max="2.5" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Decay <span id="reactorDecayVal" class="text-slate-500"></span>
+              <input id="reactorDecay" type="range" min="0.65" max="0.99" step="0.005" class="w-full">
+            </label>
+            <label class="text-slate-300">Shock Scale <span id="reactorShockVal" class="text-slate-500"></span>
+              <input id="reactorShock" type="range" min="0" max="5" step="0.1" class="w-full">
+            </label>
+            <label class="text-slate-300">Bloom Gain <span id="reactorBloomVal" class="text-slate-500"></span>
+              <input id="reactorBloom" type="range" min="0.4" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Alert Gain <span id="reactorAlertVal" class="text-slate-500"></span>
+              <input id="reactorAlert" type="range" min="0.4" max="3.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Soothe Gain <span id="reactorSootheVal" class="text-slate-500"></span>
+              <input id="reactorSoothe" type="range" min="0.3" max="2.0" step="0.05" class="w-full">
+            </label>
+            <label class="text-slate-300">Soothe Hold ms <span id="reactorHoldSootheVal" class="text-slate-500"></span>
+              <input id="reactorHoldSoothe" type="range" min="200" max="3500" step="50" class="w-full">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Discovery</h2>
+        <div class="flex flex-wrap gap-2 mb-3">
+          <button id="scanMDNS" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-2 text-sm font-semibold">Scan mDNS</button>
+          <button id="scanGateway" class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-2 text-sm font-semibold">Scan Gateway</button>
+          <button id="scanAuto" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-2 text-sm font-semibold">Scan Auto</button>
+        </div>
+        <div class="flex gap-2">
+          <input id="gatewayIP" aria-label="Gateway IP" value="192.168.4.1" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Gateway IP">
+          <input id="gatewayPort" aria-label="Gateway port" value="8888" class="bg-slate-700 rounded px-2 py-1 text-sm w-24" placeholder="Port">
+        </div>
+        <div class="flex gap-2 mt-2">
+          <input id="manualName" aria-label="Manual device name" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1" placeholder="Device name (optional)">
+          <button id="addManual" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm font-semibold">Add Manual</button>
+        </div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Connected Devices</h2>
+        <div class="flex gap-2 items-center mb-2">
+          <select id="deviceSelect" aria-label="Device selector" class="bg-slate-700 rounded px-2 py-1 text-sm flex-1"></select>
+          <button id="selectDevice" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm font-semibold">Use</button>
+        </div>
+        <div id="deviceMeta" class="text-xs text-slate-400 mb-2"></div>
+        <div class="text-xs text-slate-500 mb-1">Emotion Routing Targets (checked = auto emotion control)</div>
+        <div id="deviceChecklist" class="space-y-1 text-xs"></div>
+      </div>
+    </section>
+
+    <section class="space-y-4">
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-400">Emotion Override (Manual Takeover)</h2>
+            <div class="text-xs text-slate-500">ON = emotion scheduling active, OFF = manual-only control</div>
+          </div>
+          <label class="inline-flex items-center gap-2">
+            <input id="emotionDispatchToggle" type="checkbox" class="h-4 w-4 accent-emerald-500" checked>
+          </label>
+        </div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Node Controls</h2>
+        <div id="nodeTypeTabs" class="flex flex-wrap gap-2 mb-3"></div>
+        <div id="nodeControls" class="space-y-3 text-sm text-slate-300">Pick a tab for offline debug, or select a device to follow.</div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Sequence Recorder</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <input id="seqLabel" aria-label="Sequence label" class="bg-slate-700 rounded px-2 py-1 text-sm" placeholder="Emotion label (e.g. calm)">
+          <input id="seqName" aria-label="Sequence name" class="bg-slate-700 rounded px-2 py-1 text-sm" placeholder="Sequence name">
+          <button id="seqRecordToggle" class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm font-semibold">Start Recording</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <select id="seqSelect" aria-label="Sequence selector" class="bg-slate-700 rounded px-2 py-1 text-sm"></select>
+          <button id="seqLoad" class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm font-semibold">Load</button>
+          <button id="seqPlay" class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1 text-sm font-semibold">Play</button>
+        </div>
+        <div class="flex gap-2 items-center text-xs text-slate-400" id="seqStatus">No sequence loaded</div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-400 mb-3">Raw OSC Console</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+          <input id="oscAddress" aria-label="OSC address" value="/info/self" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-1" placeholder="/address">
+          <input id="oscArgs" aria-label="OSC arguments" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-2" placeholder="args: comma separated (e.g. 1,255,hello)">
+        </div>
+        <div class="flex gap-2 mb-3">
+          <button id="sendRawOSC" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm font-semibold">Send OSC</button>
+          <button id="refreshHistory" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Refresh Log</button>
+        </div>
+        <pre id="oscLog" class="bg-slate-900 rounded p-3 text-xs overflow-auto max-h-72"></pre>
+      </div>
+    </section>
+  </div>
+
+<script>
+  let registry = {};
+  let devices = [];
+  let selected = null;
+  let emotionTargets = new Set();
+  let forcedNodeType = null;
+  let recording = false;
+  let recordStartMs = 0;
+  let recordedEvents = [];
+  let loadedSequence = null;
+  let trackingState = null;
+  let sylvieManualArmed = false;
+  let sylvieDrivePadState = { active: false, x: 0, y: 0 };
+  let lastMotorSendAt = { 1: 0, 2: 0 };
+  let suePadState = { motionActive: false, ledActive: false };
+  let lastSueSendAt = { motion: 0, led: 0 };
+  let reactorConfigTimer = null;
+  let reactorConfigLoaded = false;
+  let showcaseMode = 'balanced';
+  const SYLVIE_DEADBAND = 20;
+  const SYLVIE_MIN_EFFECTIVE = 150;
+  const SYLVIE_SEND_INTERVAL_MS = 40;
+  const SUE_SEND_INTERVAL_MS = 50;
+  const SUE_ANGLE_MIN = 60;
+  const SUE_ANGLE_MAX = 120;
+
+  async function getJSON(url) {
+    const r = await fetch(url);
+    return r.json();
+  }
+
+  async function postJSON(url, data) {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data || {})
+    });
+    return r.json();
+  }
+
+  function parseArgs(raw) {
+    if (!raw.trim()) return [];
+    return raw.split(',').map((item) => {
+      const v = item.trim();
+      if (/^-?\d+$/.test(v)) return parseInt(v, 10);
+      return v;
+    });
+  }
+
+  function selectedDevice() {
+    return devices.find((d) => d.name === selected) || null;
+  }
+
+  function activeNodeType() {
+    const d = selectedDevice();
+    if (forcedNodeType) return forcedNodeType;
+    return d ? d.node_type : 'unknown';
+  }
+
+  function renderTabs() {
+    const holder = document.getElementById('nodeTypeTabs');
+    const nodeTypes = (registry && registry.node_types) || {};
+    const keys = Object.keys(nodeTypes);
+    if (!keys.length) {
+      holder.innerHTML = '';
+      return;
+    }
+
+    const active = activeNodeType();
+    let html = `<button class="${forcedNodeType === null ? 'bg-sky-600' : 'bg-slate-700'} hover:bg-sky-500 rounded px-2 py-1 text-xs" data-node="__follow">Follow Device</button>`;
+    keys.forEach((key) => {
+      const on = key === active;
+      const label = nodeTypes[key].label || key;
+      html += `<button class="${on ? 'bg-indigo-600' : 'bg-slate-700'} hover:bg-indigo-500 rounded px-2 py-1 text-xs" data-node="${key}">${label}</button>`;
+    });
+    holder.innerHTML = html;
+
+    holder.querySelectorAll('button').forEach((btn) => {
+      btn.onclick = async () => {
+        const node = btn.getAttribute('data-node');
+        forcedNodeType = (node === '__follow') ? null : node;
+
+        if (forcedNodeType) {
+          const candidates = devices.filter((d) => d.node_type === forcedNodeType);
+          if (candidates.length > 0) {
+            let pick = candidates.find((d) => d.name === selected);
+            if (!pick) {
+              pick = [...candidates].sort((a, b) => `${a.ip}:${a.port}`.localeCompare(`${b.ip}:${b.port}`))[0];
+            }
+            if (pick && pick.name && pick.name !== selected) {
+              await postJSON('/api/devices/select', { name: pick.name });
+              selected = pick.name;
+            }
+          }
+        }
+
+        renderDeviceList();
+        renderControls();
+      };
+    });
+  }
+
+  async function refreshCameraState() {
+    const s = await getJSON('/api/camera/state');
+    const running = !!s.running;
+    document.getElementById('cameraStatus').textContent = `Camera: ${running ? 'on' : 'off'} (index ${s.index})`;
+    document.getElementById('videoFeed').src = running ? `/video_feed?ts=${Date.now()}` : '';
+    if (!running) {
+      document.getElementById('faceInfo').textContent = 'Camera is off';
+      renderReactorStatus(null, false);
+    }
+  }
+
+  function reactorViewModel(flowerEmotion) {
+    const state = (flowerEmotion || 'REST').toUpperCase();
+    const styles = {
+      BLOOM: { emoji: '🌸', badge: 'bg-amber-600 text-amber-50', bar: 'bg-amber-500' },
+      ALERT: { emoji: '⚠️', badge: 'bg-rose-700 text-rose-50', bar: 'bg-rose-500' },
+      SOOTHE: { emoji: '🍃', badge: 'bg-emerald-700 text-emerald-50', bar: 'bg-emerald-500' },
+      REST: { emoji: '💤', badge: 'bg-slate-700 text-slate-100', bar: 'bg-slate-400' },
+    };
+    return { state, ...(styles[state] || styles.REST) };
+  }
+
+  function renderReactorStatus(reactor, cameraRunning) {
+    const badge = document.getElementById('flowerEmotionBadge');
+    const source = document.getElementById('flowerEmotionSource');
+    const stab = document.getElementById('flowerEmotionStability');
+    const bar = document.getElementById('flowerEmotionBar');
+
+    if (!cameraRunning || !reactor) {
+      const vm = reactorViewModel('REST');
+      badge.className = `inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold ${vm.badge}`;
+      badge.textContent = `${vm.state} ${vm.emoji}`;
+      source.textContent = 'source: camera off';
+      stab.textContent = '0%';
+      bar.className = `h-2 ${vm.bar}`;
+      bar.style.width = '0%';
+      return;
+    }
+
+    const vm = reactorViewModel(reactor.flower_emotion);
+    badge.className = `inline-flex items-center gap-2 rounded px-2 py-1 text-sm font-semibold ${vm.badge}`;
+    badge.textContent = `${vm.state} ${vm.emoji}`;
+
+    const srcEmotion = reactor.source_emotion || '-';
+    const srcConf = Number(reactor.source_confidence || 0);
+    source.textContent = `source: ${srcEmotion} (${srcConf.toFixed(2)})`;
+
+    const stability = Math.max(0, Math.min(100, Number(reactor.stability || 0)));
+    stab.textContent = `${stability.toFixed(0)}%`;
+    bar.className = `h-2 ${vm.bar}`;
+    bar.style.width = `${stability}%`;
+  }
+
+  function renderEmotionTable(perception, reactor) {
+    const tbody = document.getElementById('emotionTableBody');
+    const modelTag = document.getElementById('emotionModelTag');
+    if (!tbody || !modelTag) return;
+
+    let rows = [];
+    let sourceModel = reactor && reactor.source_model ? reactor.source_model : '-';
+    if (perception && perception.vit_emotion && Array.isArray(perception.vit_emotion.scores)) {
+      const classes = Array.isArray(perception.vit_emotion.classes) ? perception.vit_emotion.classes : [];
+      rows = perception.vit_emotion.scores.map((score, idx) => ({
+        emotion: classes[idx] || `e${idx}`,
+        score: Number(score || 0),
+      }));
+      sourceModel = 'vit';
+    } else if (perception && perception.emotion && perception.emotion.scores) {
+      rows = Object.entries(perception.emotion.scores).map(([emotion, score]) => ({
+        emotion,
+        score: Number(score || 0) > 1 ? Number(score || 0) / 100.0 : Number(score || 0),
+      }));
+      sourceModel = 'deepface';
+    }
+
+    rows.sort((a, b) => b.score - a.score);
+    if (!rows.length) {
+      modelTag.textContent = `model: ${sourceModel}`;
+      tbody.innerHTML = '<tr><td colspan="3" class="py-2 text-slate-500">No emotion scores yet</td></tr>';
+      return;
+    }
+
+    modelTag.textContent = `model: ${sourceModel}`;
+    tbody.innerHTML = rows.map((item) => {
+      const pct = Math.max(0, Math.min(100, item.score * 100));
+      return `
+        <tr class="border-b border-slate-800">
+          <td class="py-1 pr-2">${item.emotion}</td>
+          <td class="py-1 pr-2 text-right">${pct.toFixed(1)}%</td>
+          <td class="py-1">
+            <div class="h-2 bg-slate-700 rounded overflow-hidden">
+              <div class="h-2 bg-sky-500" style="width:${pct.toFixed(1)}%"></div>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function setReactorSliderValue(id, value, digits = 2) {
+    const input = document.getElementById(id);
+    const label = document.getElementById(`${id}Val`);
+    if (!input || !label || value === undefined || value === null) return;
+    input.value = String(value);
+    label.textContent = Number(value).toFixed(digits);
+  }
+
+  function renderReactorSliderLabels() {
+    const fields = [
+      ['reactorEnter', 2], ['reactorExit', 2], ['reactorDecay', 3], ['reactorShock', 2],
+      ['reactorBloom', 2], ['reactorAlert', 2], ['reactorSoothe', 2], ['reactorHoldSoothe', 0],
+    ];
+    fields.forEach(([id, digits]) => {
+      const input = document.getElementById(id);
+      const label = document.getElementById(`${id}Val`);
+      if (input && label) label.textContent = Number(input.value).toFixed(digits);
+    });
+  }
+
+  function collectReactorConfigFromUI() {
+    return {
+      enter_th: Number(document.getElementById('reactorEnter').value),
+      exit_th: Number(document.getElementById('reactorExit').value),
+      decay: Number(document.getElementById('reactorDecay').value),
+      shock_scale: Number(document.getElementById('reactorShock').value),
+      bloom_gain: Number(document.getElementById('reactorBloom').value),
+      alert_gain: Number(document.getElementById('reactorAlert').value),
+      soothe_gain: Number(document.getElementById('reactorSoothe').value),
+      hold_soothe_ms: Number(document.getElementById('reactorHoldSoothe').value),
+    };
+  }
+
+  const SHOWCASE_MODES = {
+    safe: {
+      enter_th: 2.0,
+      exit_th: 1.2,
+      decay: 0.92,
+      shock_scale: 1.2,
+      bloom_gain: 1.0,
+      alert_gain: 1.05,
+      soothe_gain: 0.85,
+      hold_bloom_ms: 700,
+      hold_alert_ms: 520,
+      hold_soothe_ms: 2400,
+      command_cooldown_ms: 1400,
+    },
+    balanced: {
+      enter_th: 1.8,
+      exit_th: 1.0,
+      decay: 0.88,
+      shock_scale: 2.2,
+      bloom_gain: 1.25,
+      alert_gain: 1.35,
+      soothe_gain: 0.75,
+      hold_bloom_ms: 600,
+      hold_alert_ms: 360,
+      hold_soothe_ms: 1800,
+      command_cooldown_ms: 1200,
+    },
+    dramatic: {
+      enter_th: 1.45,
+      exit_th: 0.85,
+      decay: 0.83,
+      shock_scale: 4.0,
+      bloom_gain: 1.65,
+      alert_gain: 1.9,
+      soothe_gain: 0.58,
+      hold_bloom_ms: 140,
+      hold_alert_ms: 80,
+      hold_soothe_ms: 2600,
+      command_cooldown_ms: 800,
+    },
+  };
+
+  function renderShowcaseModeState() {
+    const status = document.getElementById('showcaseModeStatus');
+    if (status) status.textContent = `Mode: ${showcaseMode[0].toUpperCase()}${showcaseMode.slice(1)}`;
+
+    const style = {
+      safe: ['modeSafe', 'bg-slate-500'],
+      balanced: ['modeBalanced', 'bg-emerald-500'],
+      dramatic: ['modeDramatic', 'bg-rose-500'],
+    };
+    ['modeSafe', 'modeBalanced', 'modeDramatic'].forEach((id) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.classList.remove('ring-2', 'ring-white', 'bg-slate-500', 'bg-emerald-500', 'bg-rose-500');
+    });
+    const active = style[showcaseMode];
+    if (active) {
+      const btn = document.getElementById(active[0]);
+      if (btn) {
+        btn.classList.add('ring-2', 'ring-white', active[1]);
+      }
+    }
+  }
+
+  async function applyShowcaseMode(mode) {
+    if (!SHOWCASE_MODES[mode]) return;
+    showcaseMode = mode;
+    renderShowcaseModeState();
+    await postJSON('/api/reactor/config', SHOWCASE_MODES[mode]);
+    await loadReactorConfig();
+  }
+
+  function bindShowcaseModeButtons() {
+    const map = {
+      modeSafe: 'safe',
+      modeBalanced: 'balanced',
+      modeDramatic: 'dramatic',
+    };
+    Object.entries(map).forEach(([id, mode]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.onclick = async () => {
+        try {
+          await applyShowcaseMode(mode);
+        } catch (e) {
+          document.getElementById('reactorConfigStatus').textContent = 'mode apply failed';
+        }
+      };
+    });
+    renderShowcaseModeState();
+  }
+
+  async function pushReactorConfig() {
+    const status = document.getElementById('reactorConfigStatus');
+    try {
+      status.textContent = 'updating...';
+      await postJSON('/api/reactor/config', collectReactorConfigFromUI());
+      status.textContent = 'runtime (synced)';
+    } catch (e) {
+      status.textContent = 'update failed';
+    }
+  }
+
+  function scheduleReactorConfigPush() {
+    renderReactorSliderLabels();
+    if (!reactorConfigLoaded) return;
+    if (reactorConfigTimer) clearTimeout(reactorConfigTimer);
+    reactorConfigTimer = setTimeout(pushReactorConfig, 150);
+  }
+
+  async function loadReactorConfig() {
+    try {
+      const data = await getJSON('/api/reactor/config');
+      const cfg = data && data.config ? data.config : {};
+      setReactorSliderValue('reactorEnter', cfg.enter_th, 2);
+      setReactorSliderValue('reactorExit', cfg.exit_th, 2);
+      setReactorSliderValue('reactorDecay', cfg.decay, 3);
+      setReactorSliderValue('reactorShock', cfg.shock_scale, 2);
+      setReactorSliderValue('reactorBloom', cfg.bloom_gain, 2);
+      setReactorSliderValue('reactorAlert', cfg.alert_gain, 2);
+      setReactorSliderValue('reactorSoothe', cfg.soothe_gain, 2);
+      setReactorSliderValue('reactorHoldSoothe', cfg.hold_soothe_ms, 0);
+
+      ['reactorEnter', 'reactorExit', 'reactorDecay', 'reactorShock', 'reactorBloom', 'reactorAlert', 'reactorSoothe', 'reactorHoldSoothe']
+        .forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.oninput = scheduleReactorConfigPush;
+        });
+      reactorConfigLoaded = true;
+      renderReactorSliderLabels();
+    } catch (e) {
+      document.getElementById('reactorConfigStatus').textContent = 'runtime (offline)';
+    }
+  }
+
+  async function loadEmotionOverrideState() {
+    try {
+      const data = await getJSON('/api/reactor/override');
+      const toggle = document.getElementById('emotionDispatchToggle');
+      if (toggle) {
+        toggle.checked = !!data.enabled;
+        toggle.onchange = async () => {
+          const enabled = !!toggle.checked;
+          await postJSON('/api/reactor/override', { enabled });
+        };
+      }
+    } catch (e) {
+      // keep silent for offline mode
+    }
+  }
+
+  async function loadCameraList() {
+    const c = await getJSON('/api/cameras?max=2');
+    const sel = document.getElementById('cameraSelect');
+    sel.innerHTML = '';
+
+    const cameraList = (c && Array.isArray(c.cameras) && c.cameras.length)
+      ? c.cameras
+      : [0];
+    cameraList.forEach((i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `Camera ${i}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderDeviceList() {
+    const sel = document.getElementById('deviceSelect');
+    sel.innerHTML = '';
+    devices.forEach((d) => {
+      const opt = document.createElement('option');
+      opt.value = d.name;
+      opt.textContent = `${d.name} (${d.node_type}) @ ${d.ip}`;
+      if (d.name === selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+
+    const info = selectedDevice();
+    const tabText = forcedNodeType ? ` | tab: ${forcedNodeType}` : '';
+    document.getElementById('connStatus').textContent = info
+      ? `Selected: ${info.name} (${info.node_type})${tabText}`
+      : `No device selected${tabText}`;
+
+    document.getElementById('deviceMeta').textContent = info
+      ? `IP ${info.ip}:${info.port} | source: ${info.source}`
+      : 'No node selected (use tabs for offline panel debug)';
+
+    const checklist = document.getElementById('deviceChecklist');
+    if (checklist) {
+      if (!devices.length) {
+        checklist.innerHTML = '<div class="text-slate-500">No discovered devices yet</div>';
+      } else {
+        checklist.innerHTML = devices.map((d) => {
+          const checked = emotionTargets.has(d.name) ? 'checked' : '';
+          return `
+            <label class="flex items-center justify-between gap-2 bg-slate-900 rounded px-2 py-1">
+              <span class="truncate">${d.name} (${d.node_type})</span>
+              <input type="checkbox" data-emotion-target="${d.name}" ${checked} class="h-3.5 w-3.5 accent-emerald-500">
+            </label>
+          `;
+        }).join('');
+
+        checklist.querySelectorAll('input[data-emotion-target]').forEach((cb) => {
+          cb.onchange = async () => {
+            const names = Array.from(checklist.querySelectorAll('input[data-emotion-target]:checked'))
+              .map((el) => el.getAttribute('data-emotion-target'));
+            await postJSON('/api/devices/emotion_targets', { names });
+            emotionTargets = new Set(names);
+          };
+        });
+      }
+    }
+
+    renderTabs();
+  }
+
+
+  function ledCard(id) {
+    return `
+      <div class="bg-slate-900 rounded p-2 flex gap-2 items-center">
+        <span>LED ${id}</span>
+        <input id="led${id}" type="color" value="#ff0000" class="w-10 h-8 rounded">
+        <button class="bg-sky-600 hover:bg-sky-500 rounded px-2 py-1" onclick="sendLED(${id})">Set</button>
+      </div>
+    `;
+  }
+
+  function renderControls() {
+    const holder = document.getElementById('nodeControls');
+    const nodeType = activeNodeType();
+
+    if (nodeType === 'sylvie') {
+      holder.innerHTML = `
+        <div class="flex gap-2 items-center">
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/auto',[1])">Auto ON</button>
+          <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendRaw('/auto',[0])">Manual</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sylvieStopAll()">STOP</button>
+        </div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Motor 1 (Reverse <-> Stop <-> Forward)</div>
+          <input id="sylvieMotor1" type="range" min="-255" max="255" value="0" class="w-full"
+            oninput="sendSylvieMotorFromSlider(1, this.value)">
+          <div id="sylvieMotor1Text" class="text-xs text-slate-400">0 (stop) | deadband 25 | min drive 150</div>
+        </div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Motor 2 (Reverse <-> Stop <-> Forward)</div>
+          <input id="sylvieMotor2" type="range" min="-255" max="255" value="0" class="w-full"
+            oninput="sendSylvieMotorFromSlider(2, this.value)">
+          <div id="sylvieMotor2Text" class="text-xs text-slate-400">0 (stop) | deadband 25 | min drive 150</div>
+        </div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Flower Pad (X: Motor1, Y: Motor2)</div>
+          <div id="sylviePadWrap" class="w-full" style="max-width:320px;">
+            <div id="sylvieDrivePad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:100%; aspect-ratio:1/1; touch-action:none;">
+              <div class="crosshair-h" style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div class="crosshair-v" style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div id="sylviePadDot" class="bg-emerald-500 border border-emerald-300 rounded-full shadow" style="position:absolute; width:16px; height:16px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+            </div>
+          </div>
+          <div id="sylviePadText" class="text-xs text-slate-400 mt-2 font-mono">X=0.00 Y=0.00 | M1:0 M2:0</div>
+        </div>
+
+        ${ledCard(1)}
+        ${ledCard(2)}
+        <div class="flex gap-2">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/preset',[1])">Preset 1</button>
+          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/preset',[2])">Preset 2</button>
+          <button class="bg-violet-600 hover:bg-violet-500 rounded px-3 py-1" onclick="sendRaw('/preset',[3])">Preset 3</button>
+        </div>
+      `;
+      initSylvieDrivePad();
+      return;
+    }
+
+    if (nodeType === 'face_track') {
+      const groups = [1, 2, 3, 4].map((i) => `
+        <div class="grid grid-cols-2 gap-2">
+          <label>Flower ${i} Pan <input id="pan${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
+          <label>Flower ${i} Tilt <input id="tilt${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
+        </div>
+      `).join('');
+
+      holder.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Auto Tracking</div>
+            <div class="flex gap-2">
+              <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">ON</button>
+              <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="setTrackingEnabled(false)">OFF</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
+            </div>
+          </div>
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Coordinate Transport</div>
+            <div class="flex gap-2 items-center">
+              <select id="trackTransport" class="bg-slate-700 rounded px-2 py-1 text-sm">
+                <option value="osc">OSC / Wi-Fi</option>
+                <option value="serial">USB Serial</option>
+              </select>
+              <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="applyTrackingTransport()">Apply</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <label class="text-xs text-slate-300">Serial Port
+            <select id="serialPortSelect" class="bg-slate-700 rounded px-2 py-1 text-sm w-full"></select>
+          </label>
+          <label class="text-xs text-slate-300">Baud
+            <input id="serialBaud" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="115200">
+          </label>
+          <button class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1 text-sm" onclick="refreshSerialPorts(true)">Refresh Ports</button>
+          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1 text-sm" onclick="connectSerialNow()">Connect Serial</button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+          <input id="serialDebugLine" class="bg-slate-700 rounded px-2 py-1 text-sm md:col-span-3" placeholder="Serial debug command, e.g. help | info | auto 1 | 960,540">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm" onclick="sendSerialDebugLine()">Send Serial</button>
+        </div>
+
+        <div id="trackStatus" class="text-xs text-slate-400">Tracking status loading...</div>
+        ${groups}
+      `;
+
+      refreshTrackingUI();
+      return;
+    }
+
+    if (nodeType === 'sue') {
+      holder.innerHTML = `
+        <div class="flex gap-2 flex-wrap">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['relax'])">Relax</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['danger'])">Danger</button>
+          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['idle'])">Idle</button>
+          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/state',['alert'])">Alert</button>
+          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="sendRaw('/state',['calm'])">Calm</button>
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/state',['breathe'])">Breathe</button>
+          <button class="bg-red-700 hover:bg-red-600 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
+        </div>
+
+        <div>Angle <input id="sueAngle" type="range" min="${SUE_ANGLE_MIN}" max="${SUE_ANGLE_MAX}" value="90" class="w-full" oninput="sendSueAngleSpeedFromSliders()"></div>
+        <div>Speed <input id="sueSpeed" type="range" min="1" max="200" value="20" class="w-full" oninput="sendSueAngleSpeedFromSliders()"></div>
+        <div id="sueAngleSpeedText" class="text-xs text-slate-400">Angle: 90 | Speed: 20 ms/deg</div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Motion Pad (X: angle ${SUE_ANGLE_MIN}..${SUE_ANGLE_MAX}, Y: speed 1..200)</div>
+          <div class="flex items-center gap-4">
+            <div id="sueMotionPad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
+              <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.35);"></div>
+              <div style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.35);"></div>
+              <div id="sueMotionDot" class="bg-emerald-500 border border-emerald-300 rounded-full" style="position:absolute; width:14px; height:14px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+            </div>
+            <div id="sueMotionText" class="text-xs text-slate-400 font-mono leading-6">X=0.00 Y=0.00</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <label>Red <input id="sueR" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLEDFromSliders()"></label>
+          <label>Green <input id="sueG" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLEDFromSliders()"></label>
+        </div>
+        <div id="sueLedText" class="text-xs text-slate-400">R: 0 | G: 0</div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">LED Pad (X: red 0..255, Y: green 0..255)</div>
+          <div class="flex items-center gap-4">
+            <div id="sueLedPad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
+              <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.35);"></div>
+              <div style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.35);"></div>
+              <div id="sueLedDot" class="bg-amber-500 border border-amber-300 rounded-full" style="position:absolute; width:14px; height:14px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+            </div>
+            <div id="sueLedPadText" class="text-xs text-slate-400 font-mono leading-6">X=0.00 Y=0.00</div>
+          </div>
+        </div>
+      `;
+      initSuePads();
+      return;
+    }
+
+    if (nodeType === 'kait') {
+      holder.innerHTML = `
+        <div class="flex gap-2 flex-wrap">
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
+        </div>
+        <div>Motor Speed (-255~255)
+          <input id="kaitSpeed" type="range" min="-255" max="255" value="0" class="w-full" oninput="sendRaw('/motor',[parseInt(this.value)])">
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[1])">Mode 1</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[2])">Mode 2</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[3])">Mode 3</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[4])">Mode 4</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[5])">Mode 5</button>
+          <button class="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1" onclick="sendRaw('/motion',[6])">Mode 6</button>
+        </div>
+      `;
+      return;
+    }
+
+    holder.innerHTML = '<div class="text-slate-400">Unknown node type. Use Raw OSC Console.</div>';
+  }
+
+  function recordEvent(address, args) {
+    if (!recording) return;
+    const t = (Date.now() - recordStartMs) / 1000.0;
+    recordedEvents.push({ t, address, args });
+    updateSequenceStatus(`Recording... ${recordedEvents.length} events`);
+  }
+
+  function updateSequenceStatus(text) {
+    document.getElementById('seqStatus').textContent = text;
+  }
+
+  async function loadSequences() {
+    const data = await getJSON('/api/sequences/list');
+    const sel = document.getElementById('seqSelect');
+    sel.innerHTML = '';
+    (data.items || []).forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = `${item.label}/${item.name}`;
+      opt.textContent = `${item.label} :: ${item.name}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function saveSequence() {
+    const label = document.getElementById('seqLabel').value || 'unlabeled';
+    const name = document.getElementById('seqName').value || 'sequence';
+    const payload = {
+      label,
+      name,
+      node_type: activeNodeType(),
+      events: recordedEvents
+    };
+    const resp = await postJSON('/api/sequences/save', payload);
+    updateSequenceStatus(resp.status === 'ok' ? `Saved ${label}/${name}` : 'Save failed');
+    await loadSequences();
+  }
+
+  async function loadSequence() {
+    const sel = document.getElementById('seqSelect').value;
+    if (!sel) return;
+    const [label, name] = sel.split('/');
+    const resp = await getJSON(`/api/sequences/load?label=${encodeURIComponent(label)}&name=${encodeURIComponent(name)}`);
+    if (resp.status === 'ok') {
+      loadedSequence = resp.sequence;
+      updateSequenceStatus(`Loaded ${label}/${name} (${loadedSequence.events.length} events)`);
+    } else {
+      updateSequenceStatus('Load failed');
+    }
+  }
+
+  async function playSequence() {
+    if (!loadedSequence || !loadedSequence.events) {
+      updateSequenceStatus('No sequence loaded');
+      return;
+    }
+    updateSequenceStatus(`Playing ${loadedSequence.name}`);
+    loadedSequence.events.forEach((evt) => {
+      setTimeout(() => {
+        sendRaw(evt.address, evt.args);
+      }, Math.max(0, evt.t * 1000));
+    });
+  }
+
+  async function sendRaw(address, args) {
+    recordEvent(address, args);
+
+    if (!selected) {
+      updateSequenceStatus('No device selected (recording only)');
+      return;
+    }
+    await postJSON('/api/osc/raw', { target: selected, address, args });
+    await refreshHistory();
+  }
+
+  async function sendMotor(id) {
+    const dir = parseInt(document.getElementById(`mDir${id}`).value, 10);
+    const speed = parseInt(document.getElementById(`mSpeed${id}`).value, 10);
+    await sendRaw(`/motor${id}`, [dir, speed]);
+  }
+
+  async function sendLED(id) {
+    const hex = document.getElementById(`led${id}`).value;
+    const r = parseInt(hex.substring(1, 3), 16);
+    const g = parseInt(hex.substring(3, 5), 16);
+    const b = parseInt(hex.substring(5, 7), 16);
+    await sendRaw(`/led${id}`, [r, g, b]);
+  }
+
+  async function sendSueLED(r = null, g = null, force = false) {
+    const rr = clamp(r === null ? parseInt(document.getElementById('sueR').value, 10) : parseInt(r, 10), 0, 255);
+    const gg = clamp(g === null ? parseInt(document.getElementById('sueG').value, 10) : parseInt(g, 10), 0, 255);
+    const now = Date.now();
+    if (!force && now - lastSueSendAt.led < SUE_SEND_INTERVAL_MS) return;
+    lastSueSendAt.led = now;
+    await sendRaw('/led', [rr, gg]);
+  }
+
+  function updateSueAngleSpeedText(angle, speed) {
+    const txt = document.getElementById('sueAngleSpeedText');
+    if (txt) txt.textContent = `Angle: ${angle} | Speed: ${speed} ms/deg`;
+  }
+
+  function updateSueLedText(r, g) {
+    const txt = document.getElementById('sueLedText');
+    if (txt) txt.textContent = `R: ${r} | G: ${g}`;
+  }
+
+  function setPadDot(dotId, x, y) {
+    const dot = document.getElementById(dotId);
+    if (!dot) return;
+    dot.style.left = `${(x + 1) * 50}%`;
+    dot.style.top = `${(1 - y) * 50}%`;
+  }
+
+  function valueToNorm(v, lo, hi) {
+    if (hi === lo) return 0;
+    const ratio = (v - lo) / (hi - lo);
+    return clamp(ratio * 2 - 1, -1, 1);
+  }
+
+  function normToValue(n, lo, hi) {
+    const t = clamp((n + 1) / 2, 0, 1);
+    return Math.round(lo + t * (hi - lo));
+  }
+
+  function syncSueMotionPadDot(angle, speed) {
+    const nx = valueToNorm(angle, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
+    const ny = valueToNorm(speed, 200, 1); // up = faster (smaller ms/deg)
+    setPadDot('sueMotionDot', nx, ny);
+    const txt = document.getElementById('sueMotionText');
+    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)}`;
+  }
+
+  function syncSueLedPadDot(r, g) {
+    const nx = valueToNorm(r, 0, 255);
+    const ny = valueToNorm(g, 0, 255);
+    setPadDot('sueLedDot', nx, ny);
+    const txt = document.getElementById('sueLedPadText');
+    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)}`;
+  }
+
+  async function sendSueAngleSpeed(angle, speed, force = false) {
+    const a = clamp(parseInt(angle, 10) || 90, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
+    const s = clamp(parseInt(speed, 10) || 20, 1, 200);
+    const now = Date.now();
+    if (!force && now - lastSueSendAt.motion < SUE_SEND_INTERVAL_MS) return;
+    lastSueSendAt.motion = now;
+    await Promise.all([
+      sendRaw('/angle', [a]),
+      sendRaw('/speed', [s]),
+    ]);
+  }
+
+  async function sendSueAngleSpeedFromSliders(force = false) {
+    const angleEl = document.getElementById('sueAngle');
+    const speedEl = document.getElementById('sueSpeed');
+    if (!angleEl || !speedEl) return;
+    const angle = clamp(parseInt(angleEl.value, 10) || 90, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
+    const speed = clamp(parseInt(speedEl.value, 10) || 20, 1, 200);
+    updateSueAngleSpeedText(angle, speed);
+    syncSueMotionPadDot(angle, speed);
+    await sendSueAngleSpeed(angle, speed, force);
+  }
+
+  async function sendSueLEDFromSliders(force = false) {
+    const rEl = document.getElementById('sueR');
+    const gEl = document.getElementById('sueG');
+    if (!rEl || !gEl) return;
+    const r = clamp(parseInt(rEl.value, 10) || 0, 0, 255);
+    const g = clamp(parseInt(gEl.value, 10) || 0, 0, 255);
+    updateSueLedText(r, g);
+    syncSueLedPadDot(r, g);
+    await sendSueLED(r, g, force);
+  }
+
+  async function sendSueFromMotionPad(nx, ny, force = false) {
+    const angle = normToValue(nx, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
+    const speed = normToValue(ny, 200, 1);
+    const angleEl = document.getElementById('sueAngle');
+    const speedEl = document.getElementById('sueSpeed');
+    if (angleEl) angleEl.value = `${angle}`;
+    if (speedEl) speedEl.value = `${speed}`;
+    updateSueAngleSpeedText(angle, speed);
+    syncSueMotionPadDot(angle, speed);
+    await sendSueAngleSpeed(angle, speed, force);
+  }
+
+  async function sendSueFromLedPad(nx, ny, force = false) {
+    const r = normToValue(nx, 0, 255);
+    const g = normToValue(ny, 0, 255);
+    const rEl = document.getElementById('sueR');
+    const gEl = document.getElementById('sueG');
+    if (rEl) rEl.value = `${r}`;
+    if (gEl) gEl.value = `${g}`;
+    updateSueLedText(r, g);
+    syncSueLedPadDot(r, g);
+    await sendSueLED(r, g, force);
+  }
+
+  function initSuePads() {
+    const motionPad = document.getElementById('sueMotionPad');
+    const ledPad = document.getElementById('sueLedPad');
+
+    const pointerNorm = (pad, x, y) => {
+      const rect = pad.getBoundingClientRect();
+      const nx = clamp(((x - rect.left) / rect.width) * 2 - 1, -1, 1);
+      const ny = clamp(1 - ((y - rect.top) / rect.height) * 2, -1, 1);
+      return { nx, ny };
+    };
+
+    if (motionPad) {
+      motionPad.onpointerdown = async (ev) => {
+        suePadState.motionActive = true;
+        motionPad.setPointerCapture(ev.pointerId);
+        const { nx, ny } = pointerNorm(motionPad, ev.clientX, ev.clientY);
+        await sendSueFromMotionPad(nx, ny, true);
+      };
+      motionPad.onpointermove = async (ev) => {
+        if (!suePadState.motionActive) return;
+        const { nx, ny } = pointerNorm(motionPad, ev.clientX, ev.clientY);
+        await sendSueFromMotionPad(nx, ny, false);
+      };
+      const motionRelease = async () => {
+        if (!suePadState.motionActive) return;
+        suePadState.motionActive = false;
+        await sendSueAngleSpeedFromSliders(true);
+      };
+      motionPad.onpointerup = motionRelease;
+      motionPad.onpointercancel = motionRelease;
+    }
+
+    if (ledPad) {
+      ledPad.onpointerdown = async (ev) => {
+        suePadState.ledActive = true;
+        ledPad.setPointerCapture(ev.pointerId);
+        const { nx, ny } = pointerNorm(ledPad, ev.clientX, ev.clientY);
+        await sendSueFromLedPad(nx, ny, true);
+      };
+      ledPad.onpointermove = async (ev) => {
+        if (!suePadState.ledActive) return;
+        const { nx, ny } = pointerNorm(ledPad, ev.clientX, ev.clientY);
+        await sendSueFromLedPad(nx, ny, false);
+      };
+      const ledRelease = async () => {
+        if (!suePadState.ledActive) return;
+        suePadState.ledActive = false;
+        await sendSueLEDFromSliders(true);
+      };
+      ledPad.onpointerup = ledRelease;
+      ledPad.onpointercancel = ledRelease;
+    }
+
+    sendSueAngleSpeedFromSliders(true);
+    sendSueLEDFromSliders(true);
+  }
+
+  async function sendFacePair(idx) {
+    const pan = parseInt(document.getElementById(`pan${idx}`).value, 10);
+    const tilt = parseInt(document.getElementById(`tilt${idx}`).value, 10);
+    await sendRaw(`/flower${idx}`, [pan, tilt]);
+  }
+
+  async function scan(mode) {
+    const gateway_ip = (document.getElementById('gatewayIP').value || '192.168.4.1').trim();
+    const gateway_port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const data = await postJSON('/api/devices/scan', { mode, gateway_ip, gateway_port });
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    emotionTargets = new Set(data.emotion_targets || (devices.filter((d) => d.emotion_enabled).map((d) => d.name)));
+    renderDeviceList();
+    renderControls();
+  }
+
+  async function refreshDevices() {
+    const data = await getJSON('/api/devices');
+    devices = data.devices || [];
+    selected = data.selected || selected;
+    emotionTargets = new Set(data.emotion_targets || (devices.filter((d) => d.emotion_enabled).map((d) => d.name)));
+    renderDeviceList();
+    renderControls();
+  }
+
+  async function refreshHistory() {
+    const data = await getJSON('/api/osc/history?limit=30');
+    const items = (data.items || []).map((item) => {
+      const dt = new Date(item.ts * 1000).toLocaleTimeString();
+      return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
+    });
+    document.getElementById('oscLog').textContent = items.join('\n');
+  }
+
+  async function addManualDevice() {
+    const ip = (document.getElementById('gatewayIP').value || '').trim();
+    const port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
+    const nameInput = (document.getElementById('manualName').value || '').trim();
+    if (!ip) {
+      document.getElementById('connStatus').textContent = 'Manual add failed: empty IP';
+      return;
+    }
+
+    const fallbackName = `manual_${ip.replace(/\./g, '_')}_${port}`;
+    const payload = {
+      name: nameInput || fallbackName,
+      ip,
+      port,
+      node_type: activeNodeType() === 'unknown' ? null : activeNodeType(),
+    };
+
+    const resp = await postJSON('/api/osc/target', payload);
+    if (resp && resp.status === 'ok' && resp.device) {
+      selected = resp.device.name;
+    }
+    await refreshDevices();
+  }
+
+  async function getTrackingConfig() {
+    trackingState = await getJSON('/api/tracking/config');
+    return trackingState;
+  }
+
+  function renderTrackingStatus() {
+    const el = document.getElementById('trackStatus');
+    if (!el || !trackingState) return;
+
+    const t = trackingState.tracking || {};
+    const s = trackingState.serial || {};
+    const targetText = trackingState.selected_target || '-';
+    const connected = s.connected ? 'connected' : 'disconnected';
+    el.textContent = `auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
+
+    const transportSel = document.getElementById('trackTransport');
+    if (transportSel && t.transport) transportSel.value = t.transport;
+
+    const baudInput = document.getElementById('serialBaud');
+    if (baudInput && s.baud) baudInput.value = s.baud;
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  function mapSylvieEffective(rawValue) {
+    const v = clamp(parseInt(rawValue, 10) || 0, -255, 255);
+    const absV = Math.abs(v);
+    if (absV <= SYLVIE_DEADBAND) return 0;
+    if (absV < SYLVIE_MIN_EFFECTIVE) return v > 0 ? SYLVIE_MIN_EFFECTIVE : -SYLVIE_MIN_EFFECTIVE;
+    return v;
+  }
+
+  function motorCmdFromSigned(rawValue, useSnap = false) {
+    const raw = clamp(parseInt(rawValue, 10) || 0, -255, 255);
+    const effective = useSnap ? mapSylvieEffective(raw) : raw;
+    if (effective > 0) return { raw, effective, dir: 1, speed: 255 };
+    if (effective < 0) return { raw, effective, dir: -1, speed: 255 };
+    return { raw, effective: 0, dir: 0, speed: 255 };
+  }
+
+  async function setSylvieManualMode() {
+    if (!sylvieManualArmed) {
+      await sendRaw('/auto', [0]);
+    }
+    sylvieManualArmed = true;
+  }
+
+  function updateSylvieMotorText(id, cmd) {
+    const el = document.getElementById(`sylvieMotor${id}Text`);
+    if (!el) return;
+    if (cmd.dir === 0) {
+      el.textContent = `${cmd.raw} -> stop (/motor${id} [0,255])`;
+      return;
+    }
+    const dirText = cmd.dir > 0 ? 'forward' : 'reverse';
+    const snapText = cmd.effective !== cmd.raw ? ' (snapped)' : '';
+    el.textContent = `${cmd.raw} -> ${dirText} (/motor${id} [${cmd.dir},255])${snapText}`;
+  }
+
+  async function sendSylvieMotorSigned(id, signedValue, force = false, useSnap = false) {
+    await setSylvieManualMode();
+    const now = Date.now();
+    if (!force && now - (lastMotorSendAt[id] || 0) < SYLVIE_SEND_INTERVAL_MS) return;
+    lastMotorSendAt[id] = now;
+
+    const cmd = motorCmdFromSigned(signedValue, useSnap);
+    await sendRaw(`/motor${id}`, [cmd.dir, cmd.speed]);
+    updateSylvieMotorText(id, cmd);
+  }
+
+  async function sendSylvieMotorFromSlider(id, rawValue) {
+    await sendSylvieMotorSigned(id, rawValue);
+  }
+
+  function setSylviePadDot(x, y) {
+    const dot = document.getElementById('sylviePadDot');
+    const txt = document.getElementById('sylviePadText');
+    if (dot) {
+      dot.style.left = `${(x + 1) * 50}%`;
+      dot.style.top = `${(1 - y) * 50}%`;
+    }
+    if (txt) {
+      const m1 = mapSylvieEffective(Math.round(x * 255));
+      const m2 = mapSylvieEffective(Math.round(y * 255));
+      txt.textContent = `X=${x.toFixed(2)} Y=${y.toFixed(2)} | M1:${m1} M2:${m2}`;
+    }
+  }
+
+  async function sendSylvieFromPad(x, y, force = false) {
+    // Per requested protocol: X controls motor1, Y controls motor2.
+    const m1 = clamp(Math.round(x * 255), -255, 255);
+    const m2 = clamp(Math.round(y * 255), -255, 255);
+
+    const s1 = document.getElementById('sylvieMotor1');
+    const s2 = document.getElementById('sylvieMotor2');
+    if (s1) s1.value = `${m1}`;
+    if (s2) s2.value = `${m2}`;
+
+    await Promise.all([
+      sendSylvieMotorSigned(1, m1, force, true),
+      sendSylvieMotorSigned(2, m2, force, true),
+    ]);
+  }
+
+  function initSylvieDrivePad() {
+    const pad = document.getElementById('sylvieDrivePad');
+    if (!pad) return;
+
+    const updateFromPointer = async (clientX, clientY, force = false) => {
+      const rect = pad.getBoundingClientRect();
+      const nx = clamp(((clientX - rect.left) / rect.width) * 2 - 1, -1, 1);
+      const ny = clamp(1 - ((clientY - rect.top) / rect.height) * 2, -1, 1);
+      sylvieDrivePadState.x = nx;
+      sylvieDrivePadState.y = ny;
+      setSylviePadDot(nx, ny);
+      await sendSylvieFromPad(nx, ny, force);
+    };
+
+    pad.onpointerdown = async (ev) => {
+      sylvieDrivePadState.active = true;
+      pad.setPointerCapture(ev.pointerId);
+      await updateFromPointer(ev.clientX, ev.clientY, true);
+    };
+
+    pad.onpointermove = async (ev) => {
+      if (!sylvieDrivePadState.active) return;
+      await updateFromPointer(ev.clientX, ev.clientY, false);
+    };
+
+    const release = async () => {
+      if (!sylvieDrivePadState.active) return;
+      sylvieDrivePadState.active = false;
+      sylvieDrivePadState.x = 0;
+      sylvieDrivePadState.y = 0;
+      setSylviePadDot(0, 0);
+      await sendSylvieFromPad(0, 0, true);
+    };
+
+    pad.onpointerup = release;
+    pad.onpointercancel = release;
+    setSylviePadDot(0, 0);
+  }
+
+  async function sylvieStopAll() {
+    const s1 = document.getElementById('sylvieMotor1');
+    const s2 = document.getElementById('sylvieMotor2');
+    if (s1) s1.value = '0';
+    if (s2) s2.value = '0';
+    sylvieDrivePadState = { active: false, x: 0, y: 0 };
+    setSylviePadDot(0, 0);
+    await Promise.all([
+      sendRaw('/preset', [3]),
+      sendSylvieMotorSigned(1, 0, true),
+      sendSylvieMotorSigned(2, 0, true),
+    ]);
+  }
+
+  // ...existing code...
+  async function init() {
+    try {
+      registry = await getJSON('/api/devices/registry');
+
+      document.getElementById('scanMDNS').onclick = async () => {
+        try { await scan('mdns'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('scanGateway').onclick = async () => {
+        try { await scan('gateway'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('scanAuto').onclick = async () => {
+        try { await scan('auto'); } catch (e) { console.error(e); }
+      };
+      document.getElementById('addManual').onclick = async () => {
+        try { await addManualDevice(); } catch (e) { console.error(e); }
+      };
+
+      document.getElementById('selectDevice').onclick = async () => {
+        const name = document.getElementById('deviceSelect').value;
+        if (!name) return;
+        await postJSON('/api/devices/select', { name });
+        selected = name;
+        renderDeviceList();
+        renderControls();
+      };
+
+      document.getElementById('sendRawOSC').onclick = async () => {
+        const address = document.getElementById('oscAddress').value.trim();
+        const args = parseArgs(document.getElementById('oscArgs').value);
+        await sendRaw(address, args);
+        await refreshHistory();
+      };
+
+      document.getElementById('seqRecordToggle').onclick = async () => {
+        recording = !recording;
+        const btn = document.getElementById('seqRecordToggle');
+        if (recording) {
+          recordedEvents = [];
+          recordStartMs = Date.now();
+          btn.textContent = 'Stop Recording';
+          btn.classList.remove('bg-emerald-600');
+          btn.classList.add('bg-amber-600');
+          updateSequenceStatus('Recording...');
+        } else {
+          btn.textContent = 'Start Recording';
+          btn.classList.remove('bg-amber-600');
+          btn.classList.add('bg-emerald-600');
+          updateSequenceStatus(`Recorded ${recordedEvents.length} events`);
+          await saveSequence();
+        }
+      };
+
+      document.getElementById('seqLoad').onclick = loadSequence;
+      document.getElementById('seqPlay').onclick = playSequence;
+
+      document.getElementById('startCamera').onclick = async () => {
+        const idx = parseInt(document.getElementById('cameraSelect').value || '0', 10);
+        const resp = await postJSON('/api/camera/start', { index: idx });
+        if (resp && resp.status === 'error') {
+          document.getElementById('faceInfo').textContent = `Camera start failed: ${resp.detail || 'unknown error'}`;
+        }
+        await refreshCameraState();
+      };
+
+      document.getElementById('stopCamera').onclick = async () => {
+        await postJSON('/api/camera/stop', {});
+        await refreshCameraState();
+      };
+
+      setInterval(async () => {
+        try {
+          const data = await getJSON('/api/faces');
+          const el = document.getElementById('faceInfo');
+          if (!data.camera_running) {
+            el.textContent = 'Camera is off';
+            renderReactorStatus(data.reactor, false);
+            renderEmotionTable(data.perception, data.reactor);
+            return;
+          }
+          if (data.primary) {
+            el.textContent = `X:${data.primary[0].toFixed(3)} Y:${data.primary[1].toFixed(3)} W:${data.primary[2].toFixed(1)}`;
+          } else {
+            el.textContent = 'No face detected';
+          }
+          renderReactorStatus(data.reactor, true);
+          renderEmotionTable(data.perception, data.reactor);
+        } catch (e) {
+          // keep silent
+        }
+      }, 600);
+
+      await loadCameraList();
+      bindShowcaseModeButtons();
+      await loadReactorConfig();
+      await loadEmotionOverrideState();
+      await refreshCameraState();
+      await refreshDevices();
+      renderTabs();
+      await loadSequences();
+      await refreshHistory();
+      await getTrackingConfig();
+    } catch (err) {
+      console.error('init failed', err);
+      document.getElementById('connStatus').textContent = `Init error: ${err.message || err}`;
+      renderTabs();
+      renderControls();
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>

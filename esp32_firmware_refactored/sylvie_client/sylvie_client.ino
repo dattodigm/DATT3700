@@ -17,11 +17,11 @@ const char* AP_SSID     = "F7OWER";
 const char* AP_PASSWORD = "12345678";
 
 // --- Station模式配置（连接已有WiFi）---
-const char* STA_SSID     = "F7OWER";
-const char* STA_PASSWORD = "12345678";
+const char* STA_SSID     = "MisAXNet";
+const char* STA_PASSWORD = "AX6000@O26";
 
 // --- mDNS 设备广播名称（局域网内可用 sylvie.local 访问）---
-const char* MDNS_NAME = "F7OWER_01";
+const char* MDNS_NAME = "sylvie";
 
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;

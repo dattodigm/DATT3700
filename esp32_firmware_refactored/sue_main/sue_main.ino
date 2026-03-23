@@ -57,8 +57,8 @@ const char* ap_password = "12345678";
 // STA mode settings / 客户端模式设置
 // ⚠️ Change these to your actual WiFi credentials before flashing!
 // ⚠️ 烧录前请修改为你实际的 WiFi 账号密码！
-const char* sta_ssid     = "YOUR_ROUTER_SSID";
-const char* sta_password = "YOUR_ROUTER_PASSWORD";
+const char* sta_ssid     = "F7OWER";
+const char* sta_password = "12345678";
 
 // Node identification / 节点识别
 const char* NODE_ID   = "sue_1";

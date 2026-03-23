@@ -1,0 +1,40 @@
+{
+  "default_osc_port": 8888,
+  "known_devices": {
+    "F7OWER_00": {"node_type": "sylvie", "label": "Sylvie Gateway"},
+    "F7OWER_01": {"node_type": "sylvie", "label": "Sylvie Client"},
+    "F7OWER_kait": {"node_type": "kait", "label": "Kait Node"},
+    "sue_1": {"node_type": "sue", "label": "Sue Node"},
+    "face_track_1": {"node_type": "face_track", "label": "Face Tracking Node"}
+  },
+  "name_rules": [
+    {"contains": "f7ower", "node_type": "sylvie"},
+    {"contains": "sylvie", "node_type": "sylvie"},
+    {"contains": "sue", "node_type": "sue"},
+    {"contains": "face", "node_type": "face_track"},
+    {"contains": "track", "node_type": "face_track"},
+    {"contains": "kait", "node_type": "kait"}
+  ],
+  "node_types": {
+    "sylvie": {
+      "label": "Sylvie",
+      "description": "2x DC motors, 2x RGB LED, presets"
+    },
+    "sue": {
+      "label": "Sue",
+      "description": "1x Servo, 2x mono LED channels"
+    },
+    "face_track": {
+      "label": "Face Tracking",
+      "description": "8x Servo (4 pan/tilt pairs)"
+    },
+    "kait": {
+      "label": "Kait",
+      "description": "1x DC motor + motion modes"
+    },
+    "unknown": {
+      "label": "Unknown",
+      "description": "Raw OSC only"
+    }
+  }
+}
