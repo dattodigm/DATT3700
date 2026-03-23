@@ -53,6 +53,11 @@ _devices = {}
 _selected_device = None
 _known_device_names = set(registry.get("known_devices", {}).keys())
 
+CONTROL_MODE_TRACKING = "face_tracking"
+CONTROL_MODE_EMOTION_MANUAL = "emotion_manual"
+_control_mode_lock = threading.Lock()
+_control_mode = CONTROL_MODE_TRACKING
+
 
 def _jsonable(obj):
     """Convert numpy-heavy payloads into plain Python values for jsonify."""
@@ -75,7 +80,7 @@ def _jsonable(obj):
     return str(obj)
 
 tracking_publisher = CoordinatePublisher(
-    get_primary_target=lambda: tracker.get_primary_target(),
+    get_primary_target=lambda: tracker.get_tracking_target(),
     get_selected_target=lambda: _selected_target(),
     osc_sender=osc,
     serial_sender=serial_sender,
@@ -159,6 +164,40 @@ emotion_reactor = EmotionReactor(
     osc_sender=osc,
     get_target_devices=lambda: _emotion_target_devices(),
 )
+
+
+def _set_control_mode(mode: str, *, sync_target=True):
+    """Apply automation priority mode and keep target node state in sync."""
+    global _control_mode
+    candidate = str(mode or "").strip().lower()
+    if candidate not in (CONTROL_MODE_TRACKING, CONTROL_MODE_EMOTION_MANUAL):
+        candidate = CONTROL_MODE_TRACKING
+
+    with _control_mode_lock:
+        _control_mode = candidate
+
+    if candidate == CONTROL_MODE_TRACKING:
+        tracking_publisher.update_config(enabled=True)
+        emotion_reactor.set_enabled(False)
+        if sync_target:
+            target = _selected_target()
+            if target:
+                osc.send_raw(target, "/track/mode", [1], source="manual")
+                osc.send_raw(target, "/track/auto", [1], source="manual")
+    else:
+        tracking_publisher.update_config(enabled=False)
+        emotion_reactor.set_enabled(True)
+        if sync_target:
+            target = _selected_target()
+            if target:
+                osc.send_raw(target, "/track/mode", [0], source="manual")
+                osc.send_raw(target, "/track/auto", [0], source="manual")
+    return _control_mode
+
+
+def _get_control_mode():
+    with _control_mode_lock:
+        return _control_mode
 
 
 def _safe_token(value, fallback):
@@ -267,6 +306,7 @@ def api_faces():
             {
                 "camera_running": False,
                 "primary": None,
+                "weighted": None,
                 "faces": [],
                 "perception": _jsonable(perception.get_results()),
                 "reactor": emotion_reactor.snapshot(has_face=False),
@@ -274,6 +314,7 @@ def api_faces():
         )
 
     target = tracker.get_primary_target()
+    weighted = tracker.get_weighted_target()
     faces = tracker.get_all_faces()
     has_face = bool(faces)
     perception_data = perception.get_results()
@@ -282,6 +323,7 @@ def api_faces():
         {
             "camera_running": True,
             "primary": _jsonable(target),
+            "weighted": _jsonable(weighted),
             "faces": _jsonable(faces),
             "perception": _jsonable(perception_data),
             "reactor": _jsonable(reactor),
@@ -385,6 +427,13 @@ def api_devices_select():
         if name not in _devices:
             return jsonify({"status": "error", "message": "device not found"}), 404
         _selected_device = name
+    mode = _get_control_mode()
+    if mode == CONTROL_MODE_TRACKING:
+        osc.send_raw(_selected_device, "/track/mode", [1], source="manual")
+        osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+    else:
+        osc.send_raw(_selected_device, "/track/mode", [0], source="manual")
+        osc.send_raw(_selected_device, "/track/auto", [0], source="manual")
     return jsonify({"status": "ok", "selected": _selected_device})
 
 
@@ -579,7 +628,9 @@ def api_tracking_config():
         if "enabled" in payload:
             target = _selected_target()
             if target:
-                osc.send_raw(target, "/track/auto", [1 if payload.get("enabled") else 0], source="manual")
+                flag = 1 if payload.get("enabled") else 0
+                osc.send_raw(target, "/track/auto", [flag], source="manual")
+                osc.send_raw(target, "/track/mode", [flag], source="manual")
 
         serial_port = payload.get("serial_port") if "serial_port" in payload else None
         serial_baud = payload.get("serial_baud") if "serial_baud" in payload else None
@@ -594,8 +645,36 @@ def api_tracking_config():
     return jsonify(
         {
             "status": "ok",
+            "control_mode": _get_control_mode(),
             "tracking": tracking_publisher.snapshot(),
             "serial": serial_sender.status(),
+            "selected_target": _selected_target(),
+        }
+    )
+
+
+@app.route("/api/control/mode", methods=["GET", "POST"])
+def api_control_mode():
+    if request.method == "POST":
+        payload = request.json or {}
+        mode = payload.get("mode", CONTROL_MODE_TRACKING)
+        applied = _set_control_mode(mode, sync_target=True)
+        return jsonify(
+            {
+                "status": "ok",
+                "mode": applied,
+                "tracking": tracking_publisher.snapshot(),
+                "reactor_enabled": emotion_reactor.is_enabled(),
+                "selected_target": _selected_target(),
+            }
+        )
+
+    return jsonify(
+        {
+            "status": "ok",
+            "mode": _get_control_mode(),
+            "tracking": tracking_publisher.snapshot(),
+            "reactor_enabled": emotion_reactor.is_enabled(),
             "selected_target": _selected_target(),
         }
     )
@@ -758,8 +837,8 @@ def create_app(camera_index=0, esp32_targets=None):
     _camera_running = False
     perception.stop()
     emotion_reactor.reset()
-    emotion_reactor.set_enabled(True)
     tracking_publisher.update_config(enabled=False, transport="osc")
+    _set_control_mode(CONTROL_MODE_EMOTION_MANUAL, sync_target=False)
     serial_sender.disconnect()
     if esp32_targets:
         for name, (ip, port) in esp32_targets.items():
@@ -771,4 +850,5 @@ def create_app(camera_index=0, esp32_targets=None):
 if __name__ == "__main__":
     _register_device({"name": "sylvie_1", "ip": "192.168.4.1", "port": 8888, "source": "default"})
     _selected_device = "sylvie_1"
+    _set_control_mode(CONTROL_MODE_EMOTION_MANUAL, sync_target=False)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

@@ -7,7 +7,7 @@ import time
 
 
 class CoordinatePublisher:
-    """Continuously publishes primary face coordinates using selected transport."""
+    """Continuously publishes tracking coordinates using selected transport."""
 
     def __init__(
         self,
@@ -98,6 +98,7 @@ class CoordinatePublisher:
                 time.sleep(min(period, 0.2))
                 continue
 
+            # Target tuple may carry extra metadata (e.g. weighted total area).
             target = self._get_primary_target()
             if not target or len(target) < 2:
                 with self._lock:

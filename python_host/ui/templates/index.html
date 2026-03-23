@@ -191,9 +191,20 @@
   let recordedEvents = [];
   let loadedSequence = null;
   let trackingState = null;
+  let controlModeState = 'emotion_manual';
   let sylvieManualArmed = false;
   let sylvieDrivePadState = { active: false, x: 0, y: 0 };
   let lastMotorSendAt = { 1: 0, 2: 0 };
+  let faceDrivePadState = { active: false, x: 0, y: 0 };
+  let faceSelectedPairs = new Set([1]);
+  let facePairAngles = {
+    1: { pan: 90, tilt: 90 },
+    2: { pan: 90, tilt: 90 },
+    3: { pan: 90, tilt: 90 },
+    4: { pan: 90, tilt: 90 },
+  };
+  let faceAngleLimits = { pan_min: 20, pan_max: 160, tilt_min: 20, tilt_max: 160 };
+  let lastFacePairSendAt = 0;
   let suePadState = { motionActive: false, ledActive: false };
   let lastSueSendAt = { motion: 0, led: 0 };
   let reactorConfigTimer = null;
@@ -202,6 +213,7 @@
   const SYLVIE_DEADBAND = 20;
   const SYLVIE_MIN_EFFECTIVE = 150;
   const SYLVIE_SEND_INTERVAL_MS = 40;
+  const FACE_PAIR_SEND_INTERVAL_MS = 55;
   const SUE_SEND_INTERVAL_MS = 50;
   const SUE_ANGLE_MIN = 60;
   const SUE_ANGLE_MAX = 120;
@@ -225,6 +237,7 @@
     return raw.split(',').map((item) => {
       const v = item.trim();
       if (/^-?\d+$/.test(v)) return parseInt(v, 10);
+      if (/^-?\d+\.\d+$/.test(v)) return parseFloat(v);
       return v;
     });
   }
@@ -694,23 +707,27 @@
     }
 
     if (nodeType === 'face_track') {
-      const groups = [1, 2, 3, 4].map((i) => `
-        <div class="grid grid-cols-2 gap-2">
-          <label>Flower ${i} Pan <input id="pan${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
-          <label>Flower ${i} Tilt <input id="tilt${i}" type="range" min="0" max="180" value="90" class="w-full" oninput="sendFacePair(${i})"></label>
-        </div>
-      `).join('');
-
       holder.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
           <div class="bg-slate-900 rounded p-2">
-            <div class="mb-1 text-xs text-slate-400">Auto Tracking</div>
+            <div class="mb-1 text-xs text-slate-400">Control Priority Mode</div>
             <div class="flex gap-2">
-              <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">ON</button>
-              <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="setTrackingEnabled(false)">OFF</button>
+              <button id="modeFaceTrackingBtn" class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setControlMode('face_tracking')">Face Tracking Priority</button>
+              <button id="modeEmotionManualBtn" class="bg-indigo-700 hover:bg-indigo-600 rounded px-3 py-1" onclick="setControlMode('emotion_manual')">Emotion/Panel Priority</button>
+            </div>
+            <div id="controlModeHint" class="text-xs text-slate-400 mt-2">mode: -</div>
+          </div>
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Tracking Enable</div>
+            <div class="flex gap-2">
+              <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">Track ON</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="setTrackingEnabled(false)">Track OFF</button>
               <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
             </div>
           </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
           <div class="bg-slate-900 rounded p-2">
             <div class="mb-1 text-xs text-slate-400">Coordinate Transport</div>
             <div class="flex gap-2 items-center">
@@ -721,6 +738,40 @@
               <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="applyTrackingTransport()">Apply</button>
             </div>
           </div>
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Selected Servo Pairs (XY panel controls checked pairs)</div>
+            <div id="facePairChecklist" class="grid grid-cols-2 gap-2 text-xs"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+          <label class="text-xs text-slate-300">Pan Min
+            <input id="facePanMin" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="20" type="number" min="0" max="180">
+          </label>
+          <label class="text-xs text-slate-300">Pan Max
+            <input id="facePanMax" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="160" type="number" min="0" max="180">
+          </label>
+          <label class="text-xs text-slate-300">Tilt Min (Y)
+            <input id="faceTiltMin" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="20" type="number" min="0" max="180">
+          </label>
+          <label class="text-xs text-slate-300">Tilt Max (Y)
+            <input id="faceTiltMax" class="bg-slate-700 rounded px-2 py-1 text-sm w-full" value="160" type="number" min="0" max="180">
+          </label>
+        </div>
+        <div class="flex gap-2">
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm" onclick="applyFaceAngleLimits(true)">Apply Limits to Node</button>
+          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm" onclick="centerFacePad()">Center XY</button>
+        </div>
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Face Tracking XY Panel (X: Pan, Y: Tilt)</div>
+          <div id="facePadWrap" class="w-full" style="max-width:360px;">
+            <div id="faceDrivePad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:100%; aspect-ratio:1/1; touch-action:none;">
+              <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.4);"></div>
+              <div id="facePadDot" class="bg-cyan-500 border border-cyan-300 rounded-full shadow" style="position:absolute; width:16px; height:16px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+            </div>
+          </div>
+          <div id="facePadText" class="text-xs text-slate-400 mt-2 font-mono">X=0.00 Y=0.00 | Pan:90 Tilt:90 | pairs:[1]</div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
@@ -740,9 +791,12 @@
         </div>
 
         <div id="trackStatus" class="text-xs text-slate-400">Tracking status loading...</div>
-        ${groups}
       `;
 
+      renderFacePairChecklist();
+      syncFaceLimitInputsFromState();
+      bindFaceLimitInputs();
+      initFaceDrivePad();
       refreshTrackingUI();
       return;
     }
@@ -1076,12 +1130,6 @@
     sendSueLEDFromSliders(true);
   }
 
-  async function sendFacePair(idx) {
-    const pan = parseInt(document.getElementById(`pan${idx}`).value, 10);
-    const tilt = parseInt(document.getElementById(`tilt${idx}`).value, 10);
-    await sendRaw(`/flower${idx}`, [pan, tilt]);
-  }
-
   async function scan(mode) {
     const gateway_ip = (document.getElementById('gatewayIP').value || '192.168.4.1').trim();
     const gateway_port = parseInt(document.getElementById('gatewayPort').value, 10) || 8888;
@@ -1137,7 +1185,287 @@
 
   async function getTrackingConfig() {
     trackingState = await getJSON('/api/tracking/config');
+    if (trackingState && trackingState.control_mode) {
+      controlModeState = trackingState.control_mode;
+    }
     return trackingState;
+  }
+
+  function selectedFacePairsSorted() {
+    return Array.from(faceSelectedPairs).map((v) => parseInt(v, 10)).filter((v) => v >= 1 && v <= 4).sort((a, b) => a - b);
+  }
+
+  function sanitizeFaceLimits(raw) {
+    let panMin = clamp(parseInt(raw.pan_min, 10) || 20, 0, 180);
+    let panMax = clamp(parseInt(raw.pan_max, 10) || 160, 0, 180);
+    if (panMin > panMax) {
+      const t = panMin;
+      panMin = panMax;
+      panMax = t;
+    }
+    let tiltMin = clamp(parseInt(raw.tilt_min, 10) || 20, 0, 180);
+    let tiltMax = clamp(parseInt(raw.tilt_max, 10) || 160, 0, 180);
+    if (tiltMin > tiltMax) {
+      const t = tiltMin;
+      tiltMin = tiltMax;
+      tiltMax = t;
+    }
+    return {
+      pan_min: panMin,
+      pan_max: panMax,
+      tilt_min: tiltMin,
+      tilt_max: tiltMax,
+    };
+  }
+
+  function collectFaceLimitsFromUI() {
+    return sanitizeFaceLimits({
+      pan_min: document.getElementById('facePanMin')?.value,
+      pan_max: document.getElementById('facePanMax')?.value,
+      tilt_min: document.getElementById('faceTiltMin')?.value,
+      tilt_max: document.getElementById('faceTiltMax')?.value,
+    });
+  }
+
+  function syncFaceLimitInputsFromState() {
+    const panMin = document.getElementById('facePanMin');
+    const panMax = document.getElementById('facePanMax');
+    const tiltMin = document.getElementById('faceTiltMin');
+    const tiltMax = document.getElementById('faceTiltMax');
+    if (panMin) panMin.value = `${faceAngleLimits.pan_min}`;
+    if (panMax) panMax.value = `${faceAngleLimits.pan_max}`;
+    if (tiltMin) tiltMin.value = `${faceAngleLimits.tilt_min}`;
+    if (tiltMax) tiltMax.value = `${faceAngleLimits.tilt_max}`;
+  }
+
+  function bindFaceLimitInputs() {
+    ['facePanMin', 'facePanMax', 'faceTiltMin', 'faceTiltMax'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.onchange = () => {
+        faceAngleLimits = collectFaceLimitsFromUI();
+        syncFaceLimitInputsFromState();
+      };
+    });
+  }
+
+  function renderFacePairChecklist() {
+    const holder = document.getElementById('facePairChecklist');
+    if (!holder) return;
+    holder.innerHTML = [1, 2, 3, 4].map((idx) => {
+      const checked = faceSelectedPairs.has(idx) ? 'checked' : '';
+      return `<label class="inline-flex items-center gap-2 bg-slate-800 rounded px-2 py-1">
+        <input type="checkbox" class="h-3.5 w-3.5 accent-cyan-500" data-face-pair="${idx}" ${checked}>
+        <span>Pair ${idx}</span>
+      </label>`;
+    }).join('');
+    holder.querySelectorAll('input[data-face-pair]').forEach((cb) => {
+      cb.onchange = () => {
+        const val = parseInt(cb.getAttribute('data-face-pair'), 10);
+        if (cb.checked) faceSelectedPairs.add(val);
+        else faceSelectedPairs.delete(val);
+        if (faceSelectedPairs.size === 0) faceSelectedPairs.add(1);
+        renderFacePairChecklist();
+        updateFacePadDot(faceDrivePadState.x, faceDrivePadState.y);
+      };
+    });
+  }
+
+  function faceNormToAngles(nx, ny) {
+    const limits = faceAngleLimits;
+    // Match tracking mapping direction: rightward X mirrors to smaller pan.
+    const pan = normToValue(nx, limits.pan_max, limits.pan_min);
+    const tilt = normToValue(ny, limits.tilt_min, limits.tilt_max);
+    return { pan, tilt };
+  }
+
+  function updateFacePadDot(nx, ny, overrideAngles = null) {
+    const dot = document.getElementById('facePadDot');
+    const txt = document.getElementById('facePadText');
+    if (dot) {
+      dot.style.left = `${(nx + 1) * 50}%`;
+      dot.style.top = `${(1 - ny) * 50}%`;
+    }
+    const angles = overrideAngles || faceNormToAngles(nx, ny);
+    if (txt) {
+      const pairs = selectedFacePairsSorted();
+      txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | Pan:${angles.pan} Tilt:${angles.tilt} | pairs:[${pairs.join(',')}]`;
+    }
+  }
+
+  async function sendFaceXYToPairs(nx, ny, force = false) {
+    const pairs = selectedFacePairsSorted();
+    const angles = faceNormToAngles(nx, ny);
+    updateFacePadDot(nx, ny, angles);
+    if (!pairs.length) return;
+
+    const now = Date.now();
+    if (!force && now - lastFacePairSendAt < FACE_PAIR_SEND_INTERVAL_MS) return;
+    lastFacePairSendAt = now;
+
+    pairs.forEach((idx) => {
+      facePairAngles[idx] = { pan: angles.pan, tilt: angles.tilt };
+    });
+
+    if (!selected) return;
+    await Promise.all(
+      pairs.map((idx) => postJSON('/api/osc/raw', {
+        target: selected,
+        address: `/flower${idx}`,
+        args: [angles.pan, angles.tilt],
+        source: 'manual',
+      }))
+    );
+  }
+
+  async function centerFacePad() {
+    faceDrivePadState.x = 0;
+    faceDrivePadState.y = 0;
+    await sendFaceXYToPairs(0, 0, true);
+  }
+
+  function initFaceDrivePad() {
+    const pad = document.getElementById('faceDrivePad');
+    if (!pad) return;
+
+    const pointerNorm = (x, y) => {
+      const rect = pad.getBoundingClientRect();
+      const nx = clamp(((x - rect.left) / rect.width) * 2 - 1, -1, 1);
+      const ny = clamp(1 - ((y - rect.top) / rect.height) * 2, -1, 1);
+      return { nx, ny };
+    };
+
+    const updateFromPointer = async (x, y, force = false) => {
+      const { nx, ny } = pointerNorm(x, y);
+      faceDrivePadState.x = nx;
+      faceDrivePadState.y = ny;
+      await sendFaceXYToPairs(nx, ny, force);
+    };
+
+    pad.onpointerdown = async (ev) => {
+      faceDrivePadState.active = true;
+      pad.setPointerCapture(ev.pointerId);
+      await setControlMode('emotion_manual', false);
+      await updateFromPointer(ev.clientX, ev.clientY, true);
+    };
+    pad.onpointermove = async (ev) => {
+      if (!faceDrivePadState.active) return;
+      await updateFromPointer(ev.clientX, ev.clientY, false);
+    };
+    const release = async () => {
+      if (!faceDrivePadState.active) return;
+      faceDrivePadState.active = false;
+      await sendFaceXYToPairs(faceDrivePadState.x, faceDrivePadState.y, true);
+    };
+    pad.onpointerup = release;
+    pad.onpointercancel = release;
+    updateFacePadDot(faceDrivePadState.x, faceDrivePadState.y);
+  }
+
+  async function setControlMode(mode, refreshUI = true) {
+    const payload = { mode };
+    const resp = await postJSON('/api/control/mode', payload);
+    if (resp && resp.mode) controlModeState = resp.mode;
+    if (refreshUI) await refreshTrackingUI();
+    return resp;
+  }
+
+  function renderControlModeUI() {
+    const hint = document.getElementById('controlModeHint');
+    const btnTrack = document.getElementById('modeFaceTrackingBtn');
+    const btnEmotion = document.getElementById('modeEmotionManualBtn');
+    if (hint) {
+      hint.textContent = controlModeState === 'face_tracking'
+        ? 'mode: Face tracking has automation priority'
+        : 'mode: Emotion + panel/manual has automation priority';
+    }
+    if (btnTrack && btnEmotion) {
+      btnTrack.classList.toggle('ring-2', controlModeState === 'face_tracking');
+      btnTrack.classList.toggle('ring-white', controlModeState === 'face_tracking');
+      btnEmotion.classList.toggle('ring-2', controlModeState !== 'face_tracking');
+      btnEmotion.classList.toggle('ring-white', controlModeState !== 'face_tracking');
+    }
+  }
+
+  async function setTrackingEnabled(enabled) {
+    await postJSON('/api/tracking/config', { enabled: !!enabled });
+    if (enabled) {
+      await setControlMode('face_tracking', false);
+    }
+    await refreshTrackingUI();
+  }
+
+  async function applyTrackingTransport() {
+    const transport = document.getElementById('trackTransport')?.value || 'osc';
+    const serialPort = document.getElementById('serialPortSelect')?.value || '';
+    const serialBaud = parseInt(document.getElementById('serialBaud')?.value || '115200', 10) || 115200;
+    await postJSON('/api/tracking/config', {
+      transport,
+      serial_port: serialPort,
+      serial_baud: serialBaud,
+    });
+    await refreshTrackingUI();
+  }
+
+  async function refreshSerialPorts(scan = false) {
+    const data = await getJSON(`/api/serial/ports?scan=${scan ? 1 : 0}`);
+    const sel = document.getElementById('serialPortSelect');
+    if (!sel) return data;
+    const ports = data.ports || [];
+    const current = (trackingState && trackingState.serial && trackingState.serial.port) ? trackingState.serial.port : '';
+    sel.innerHTML = '<option value="">(none)</option>';
+    ports.forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = item.device;
+      opt.textContent = `${item.device} ${item.description ? `(${item.description})` : ''}`;
+      if (item.device === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    return data;
+  }
+
+  async function connectSerialNow() {
+    const serialPort = document.getElementById('serialPortSelect')?.value || '';
+    const serialBaud = parseInt(document.getElementById('serialBaud')?.value || '115200', 10) || 115200;
+    await postJSON('/api/tracking/config', {
+      serial_port: serialPort,
+      serial_baud: serialBaud,
+      serial_connect: true,
+    });
+    await refreshTrackingUI();
+  }
+
+  async function sendSerialDebugLine() {
+    const line = (document.getElementById('serialDebugLine')?.value || '').trim();
+    if (!line) return;
+    await postJSON('/api/serial/raw', { line });
+    await refreshTrackingUI();
+  }
+
+  async function applyFaceAngleLimits(pushToNode = true) {
+    faceAngleLimits = collectFaceLimitsFromUI();
+    syncFaceLimitInputsFromState();
+    if (pushToNode && selected) {
+      await postJSON('/api/osc/raw', {
+        target: selected,
+        address: '/track/limits',
+        args: [
+          faceAngleLimits.pan_min,
+          faceAngleLimits.pan_max,
+          faceAngleLimits.tilt_min,
+          faceAngleLimits.tilt_max,
+        ],
+        source: 'manual',
+      });
+    }
+    updateFacePadDot(faceDrivePadState.x, faceDrivePadState.y);
+  }
+
+  async function refreshTrackingUI() {
+    await getTrackingConfig();
+    await refreshSerialPorts(false);
+    renderTrackingStatus();
+    renderControlModeUI();
   }
 
   function renderTrackingStatus() {
@@ -1148,7 +1476,8 @@
     const s = trackingState.serial || {};
     const targetText = trackingState.selected_target || '-';
     const connected = s.connected ? 'connected' : 'disconnected';
-    el.textContent = `auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
+    controlModeState = trackingState.control_mode || controlModeState;
+    el.textContent = `mode:${controlModeState} | auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
 
     const transportSel = document.getElementById('trackTransport');
     if (transportSel && t.transport) transportSel.value = t.transport;
@@ -1375,7 +1704,11 @@
             return;
           }
           if (data.primary) {
-            el.textContent = `X:${data.primary[0].toFixed(3)} Y:${data.primary[1].toFixed(3)} W:${data.primary[2].toFixed(1)}`;
+            const wx = data.weighted ? Number(data.weighted[0]).toFixed(3) : Number(data.primary[0]).toFixed(3);
+            const wy = data.weighted ? Number(data.weighted[1]).toFixed(3) : Number(data.primary[1]).toFixed(3);
+            const wc = data.weighted ? Number(data.weighted[3] || 1) : 1;
+            const wa = data.weighted ? Number(data.weighted[2] || 0).toFixed(1) : Number(data.primary[2] || 0).toFixed(1);
+            el.textContent = `Track X:${wx} Y:${wy} | faces:${wc} | area:${wa}`;
           } else {
             el.textContent = 'No face detected';
           }
