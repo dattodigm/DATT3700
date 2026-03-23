@@ -79,8 +79,7 @@ export function SequenceRecorder({
   };
 
   const handleStopRecording = () => {
-    const events = stopRecording();
-    // Events are still in the store
+    stopRecording();
   };
 
   const handleSave = async () => {
