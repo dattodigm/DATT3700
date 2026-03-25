@@ -82,6 +82,7 @@ def _jsonable(obj):
 tracking_publisher = CoordinatePublisher(
     get_primary_target=lambda: tracker.get_tracking_target(),
     get_selected_target=lambda: _selected_target(),
+    get_selected_node_type=lambda: _selected_node_type(),
     osc_sender=osc,
     serial_sender=serial_sender,
 )

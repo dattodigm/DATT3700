@@ -13,6 +13,7 @@ class CoordinatePublisher:
         self,
         get_primary_target,
         get_selected_target,
+        get_selected_node_type,
         osc_sender,
         serial_sender=None,
         frame_width=1920,
@@ -20,6 +21,7 @@ class CoordinatePublisher:
     ):
         self._get_primary_target = get_primary_target
         self._get_selected_target = get_selected_target
+        self._get_selected_node_type = get_selected_node_type
         self._osc = osc_sender
         self._serial = serial_sender
 
@@ -117,13 +119,17 @@ class CoordinatePublisher:
             if cfg["transport"] == "osc":
                 target_name = self._get_selected_target()
                 if target_name:
-                    sent = self._osc.send_raw(
-                        target_name,
-                        "/track/norm",
-                        [round(nx, 4), round(ny, 4)],
-                        source="auto",
-                    )
-                    result = "osc_ok" if sent else "osc_failed"
+                    node_type = str(self._get_selected_node_type() or "unknown").lower().strip()
+                    if node_type in ("sue", "face_track"):
+                        sent = self._osc.send_raw(
+                            target_name,
+                            "/track/norm",
+                            [round(nx, 4), round(ny, 4)],
+                            source="auto",
+                        )
+                        result = "osc_ok" if sent else "osc_failed"
+                    else:
+                        result = f"unsupported_node:{node_type}"
                 else:
                     result = "no_target"
             else:

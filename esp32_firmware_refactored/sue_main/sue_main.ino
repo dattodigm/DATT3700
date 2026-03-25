@@ -85,11 +85,15 @@ struct EyeState {
   float gazeY;
   float targetX;
   float targetY;
+  float gazeLimitX;
+  float gazeLimitY;
   float manualOpen;
+  float pupilSpinPhase;
   bool manualOpenOverride;
   bool trackEnabled;
   bool autoBlink;
   bool autoBreathe;
+  bool pupilAutoSpin;
   bool blinkRunning;
   unsigned long blinkStartMs;
   unsigned long blinkDurationMs;
@@ -100,8 +104,11 @@ struct EyeState {
 EyeState eye = {
   0.0f, 0.0f,
   0.0f, 0.0f,
-  1.0f, false,
-  true, true, true,
+  1.0f, 1.0f,
+  1.0f,
+  0.0f,
+  false,
+  true, true, true, true,
   false, 0, 180, 0, 0
 };
 
@@ -158,7 +165,16 @@ void setTrackPixel(int x, int y, int frameW, int frameH);
 void setManualEyeOpenPercent(int pct);
 void setManualEyeLook(float x, float y);
 void updateEye(bool force = false);
-void drawEyeFrame(Arduino_GFX* c, float gazeX, float gazeY, float openFactor, float breatheScale, float breatheDrift);
+void drawEyeFrame(
+  Arduino_GFX* c,
+  float gazeX,
+  float gazeY,
+  float openFactor,
+  float breatheScale,
+  float breatheDrift,
+  float pupilSpinPhase,
+  bool pupilAutoSpin
+);
 void drawStaticBackground();
 unsigned long chooseNextBlinkDelayMs();
 
@@ -176,6 +192,8 @@ void routeEyeLook(OSCMessage& msg, int addrOffset);
 void routeEyeOpen(OSCMessage& msg, int addrOffset);
 void routeEyeBlink(OSCMessage& msg, int addrOffset);
 void routeEyeBreathe(OSCMessage& msg, int addrOffset);
+void routeEyeLimits(OSCMessage& msg, int addrOffset);
+void routeEyePupilAuto(OSCMessage& msg, int addrOffset);
 void routeInfoSelf(OSCMessage& msg, int addrOffset);
 void routeInfoServo(OSCMessage& msg, int addrOffset);
 
@@ -411,8 +429,8 @@ void emergencyStop() {
 void setTrackNorm(float nx, float ny) {
   nx = clampf(nx, 0.0f, 1.0f);
   ny = clampf(ny, 0.0f, 1.0f);
-  eye.targetX = clampf((nx * 2.0f) - 1.0f, -1.0f, 1.0f);
-  eye.targetY = clampf((ny * 2.0f) - 1.0f, -1.0f, 1.0f);
+  eye.targetX = clampf(((nx * 2.0f) - 1.0f) * eye.gazeLimitX, -1.0f, 1.0f);
+  eye.targetY = clampf(((ny * 2.0f) - 1.0f) * eye.gazeLimitY, -1.0f, 1.0f);
   eye.lastTrackInputMs = millis();
 }
 
@@ -431,17 +449,41 @@ void setManualEyeOpenPercent(int pct) {
 
 void setManualEyeLook(float x, float y) {
   eye.trackEnabled = false;
-  eye.targetX = clampf(x, -1.0f, 1.0f);
-  eye.targetY = clampf(y, -1.0f, 1.0f);
+  eye.targetX = clampf(x * eye.gazeLimitX, -1.0f, 1.0f);
+  eye.targetY = clampf(y * eye.gazeLimitY, -1.0f, 1.0f);
 }
 
-void drawEyeFrame(Arduino_GFX* c, float gazeX, float gazeY, float openFactor, float breatheScale, float breatheDrift) {
-  int irisCx = LCX + (int)roundf(gazeX * 14.0f);
-  int irisCy = LCY + (int)roundf(gazeY * 11.0f + breatheDrift);
+void drawEyeFrame(
+  Arduino_GFX* c,
+  float gazeX,
+  float gazeY,
+  float openFactor,
+  float breatheScale,
+  float breatheDrift,
+  float pupilSpinPhase,
+  bool pupilAutoSpin
+) {
+  int irisCx = LCX + (int)roundf(gazeX * 23.0f);
+  int irisCy = LCY + (int)roundf(gazeY * 18.0f + breatheDrift);
   int irisOuter = (int)roundf(30.0f * breatheScale);
   int irisMid = (int)roundf(23.0f * breatheScale);
   int irisInner = (int)roundf(14.0f * breatheScale);
   int pupilR = (int)roundf(11.0f * breatheScale);
+  int pupilCx = irisCx;
+  int pupilCy = irisCy;
+  int hiCx = pupilCx - 4;
+  int hiCy = pupilCy - 6;
+
+  if (pupilAutoSpin) {
+    // Pupil/highlight-only orbit amount is driven by lid open factor.
+    float orbitR = 1.2f + (1.0f - openFactor) * 4.8f;
+    float dx = orbitR * cosf(pupilSpinPhase);
+    float dy = orbitR * sinf(pupilSpinPhase * 0.85f + 0.45f);
+    pupilCx += (int)roundf(dx);
+    pupilCy += (int)roundf(dy);
+    hiCx = pupilCx + (int)roundf((orbitR + 1.2f) * cosf(pupilSpinPhase + 1.85f));
+    hiCy = pupilCy + (int)roundf((orbitR + 0.8f) * sinf(pupilSpinPhase + 2.2f));
+  }
 
   c->fillScreen(COLOR_BLACK);
   c->fillCircle(LCX, LCY, 66, COLOR_SCLERA);
@@ -449,8 +491,8 @@ void drawEyeFrame(Arduino_GFX* c, float gazeX, float gazeY, float openFactor, fl
   c->fillCircle(irisCx, irisCy, irisOuter, COLOR_IRIS_DARK);
   c->fillCircle(irisCx, irisCy, irisMid, COLOR_IRIS_MID);
   c->fillCircle(irisCx, irisCy, irisInner, COLOR_IRIS_LIGHT);
-  c->fillCircle(irisCx, irisCy, pupilR, COLOR_BLACK);
-  c->fillCircle(irisCx - 4, irisCy - 6, 4, COLOR_WHITE);
+  c->fillCircle(pupilCx, pupilCy, pupilR, COLOR_BLACK);
+  c->fillCircle(hiCx, hiCy, 4, COLOR_WHITE);
 
   openFactor = clampf(openFactor, 0.02f, 1.0f);
   int coverPx = (int)roundf((1.0f - openFactor) * 66.0f);
@@ -468,6 +510,7 @@ void drawStaticBackground() {
 
 void updateEye(bool force) {
   unsigned long now = millis();
+  unsigned long dtMs = (lastEyeFrameMs > 0) ? (now - lastEyeFrameMs) : EYE_FRAME_INTERVAL_MS;
   if (!force && now - lastEyeFrameMs < EYE_FRAME_INTERVAL_MS) return;
   lastEyeFrameMs = now;
 
@@ -508,7 +551,24 @@ void updateEye(bool force) {
   float openBase = eye.manualOpenOverride ? eye.manualOpen : 1.0f;
   float openFactor = clampf(openBase * blinkOpen, 0.02f, 1.0f);
 
-  drawEyeFrame(backCanvas, eye.gazeX, eye.gazeY, openFactor, breatheScale, breatheDrift);
+  if (eye.pupilAutoSpin) {
+    float spinSpeed = 0.65f + ((1.0f - openFactor) * 2.8f);
+    eye.pupilSpinPhase += spinSpeed * ((float)dtMs / 1000.0f);
+    if (eye.pupilSpinPhase > (2.0f * PI)) {
+      eye.pupilSpinPhase = fmodf(eye.pupilSpinPhase, 2.0f * PI);
+    }
+  }
+
+  drawEyeFrame(
+    backCanvas,
+    eye.gazeX,
+    eye.gazeY,
+    openFactor,
+    breatheScale,
+    breatheDrift,
+    eye.pupilSpinPhase,
+    eye.pupilAutoSpin
+  );
   ((Arduino_Canvas*)backCanvas)->flush();
   Arduino_GFX* tmp = frontCanvas;
   frontCanvas = backCanvas;
@@ -558,6 +618,15 @@ void routeEyeLook(OSCMessage& msg, int addrOffset) {
 void routeEyeOpen(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) setManualEyeOpenPercent(msg.getInt(0)); }
 void routeEyeBlink(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) eye.autoBlink = msg.getInt(0) != 0; }
 void routeEyeBreathe(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) eye.autoBreathe = msg.getInt(0) != 0; }
+void routeEyeLimits(OSCMessage& msg, int addrOffset) {
+  int lx = msg.isInt(0) ? msg.getInt(0) : 100;
+  int ly = msg.isInt(1) ? msg.getInt(1) : lx;
+  eye.gazeLimitX = clampf((float)constrain(lx, 10, 100) / 100.0f, 0.1f, 1.0f);
+  eye.gazeLimitY = clampf((float)constrain(ly, 10, 100) / 100.0f, 0.1f, 1.0f);
+}
+void routeEyePupilAuto(OSCMessage& msg, int addrOffset) {
+  if (msg.isInt(0)) eye.pupilAutoSpin = msg.getInt(0) != 0;
+}
 
 void routeInfoSelf(OSCMessage& msg, int addrOffset) {
   OSCMessage reply("/info/self");
@@ -604,6 +673,8 @@ void processOSC() {
   msg.route("/eye/open", routeEyeOpen);
   msg.route("/eye/blink", routeEyeBlink);
   msg.route("/eye/breathe", routeEyeBreathe);
+  msg.route("/eye/limits", routeEyeLimits);
+  msg.route("/eye/pupil_auto", routeEyePupilAuto);
   msg.route("/info/self", routeInfoSelf);
   msg.route("/info/servo", routeInfoServo);
 }
@@ -640,6 +711,16 @@ void parseSerialLine() {
     return;
   }
   if (line.startsWith("eyeopen ")) { setManualEyeOpenPercent(line.substring(8).toInt()); return; }
+  if (line.startsWith("eyelimits ")) {
+    int lx = 100, ly = 100;
+    if (sscanf(line.c_str(), "eyelimits %d %d", &lx, &ly) >= 1) {
+      eye.gazeLimitX = clampf((float)constrain(lx, 10, 100) / 100.0f, 0.1f, 1.0f);
+      eye.gazeLimitY = clampf((float)constrain(ly, 10, 100) / 100.0f, 0.1f, 1.0f);
+    }
+    return;
+  }
+  if (line == "pupilauto on") { eye.pupilAutoSpin = true; return; }
+  if (line == "pupilauto off") { eye.pupilAutoSpin = false; return; }
   if (line == "track on") { eye.trackEnabled = true; return; }
   if (line == "track off") { eye.trackEnabled = false; return; }
 }
@@ -654,7 +735,15 @@ void printSelfInfo() {
   Serial.printf("IP: %d.%d.%d.%d\n", ip[0], ip[1], ip[2], ip[3]);
   Serial.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   Serial.printf("Servo angle: %d (safe %d..%d)\n", currentPetalAngle, SERVO_SAFE_MIN_ANGLE, SERVO_SAFE_MAX_ANGLE);
-  Serial.printf("Eye track=%d blink=%d breathe=%d\n", eye.trackEnabled ? 1 : 0, eye.autoBlink ? 1 : 0, eye.autoBreathe ? 1 : 0);
+  Serial.printf(
+    "Eye track=%d blink=%d breathe=%d pupilAuto=%d limits=(%.2f,%.2f)\n",
+    eye.trackEnabled ? 1 : 0,
+    eye.autoBlink ? 1 : 0,
+    eye.autoBreathe ? 1 : 0,
+    eye.pupilAutoSpin ? 1 : 0,
+    eye.gazeLimitX,
+    eye.gazeLimitY
+  );
   Serial.println("=====================\n");
 }
 
@@ -664,6 +753,8 @@ void printHelp() {
   Serial.println("open <0-100> | angle <safe-angle> | speed <2-120>");
   Serial.println("look <x y>  (range -1..1)");
   Serial.println("eyeopen <0-100>");
+  Serial.println("eyelimits <x% y%>  (10..100)");
+  Serial.println("pupilauto on|off");
   Serial.println("track on|off");
   Serial.println("wifi status | wifi retry <attempts>");
   Serial.println("status | info | help");

@@ -207,6 +207,7 @@
   let lastFacePairSendAt = 0;
   let suePadState = { motionActive: false, eyeActive: false };
   let lastSueSendAt = { motion: 0, eye: 0 };
+  let sueEyeConfig = { limitX: 100, limitY: 100, pupilAuto: true };
   let reactorConfigTimer = null;
   let reactorConfigLoaded = false;
   let showcaseMode = 'balanced';
@@ -841,8 +842,8 @@
         <div class="bg-slate-900 rounded p-2">
           <div class="mb-1 text-xs text-slate-400">Eye Controls</div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <button class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[1])">Track ON</button>
-            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[0])">Track OFF</button>
+            <button class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1" onclick="setSueTrackEnabled(true)">Track ON</button>
+            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="setSueTrackEnabled(false)">Track OFF</button>
             <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
             <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/eye/blink',[1])">Auto Blink ON</button>
             <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/eye/blink',[0])">Auto Blink OFF</button>
@@ -857,6 +858,19 @@
 
         <div class="bg-slate-900 rounded p-2">
           <div class="mb-1 text-xs text-slate-400">Eye Gaze Pad (X/Y -> /eye/look)</div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+            <label class="text-xs text-slate-300">Limit X %
+              <input id="sueEyeLimitX" type="range" min="10" max="100" value="100" class="w-full" oninput="updateSueEyeLimitPreview()">
+            </label>
+            <label class="text-xs text-slate-300">Limit Y %
+              <input id="sueEyeLimitY" type="range" min="10" max="100" value="100" class="w-full" oninput="updateSueEyeLimitPreview()">
+            </label>
+            <div class="flex flex-col gap-1">
+              <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-xs" onclick="applySueEyeLimits()">Apply Limits</button>
+              <button id="suePupilAutoBtn" class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1 text-xs" onclick="toggleSuePupilAuto()">Pupil Auto: ON</button>
+            </div>
+          </div>
+          <div id="sueEyeLimitText" class="text-xs text-slate-500 mb-2">Limit X: 100% | Limit Y: 100%</div>
           <div class="flex items-center gap-4">
             <div id="sueEyePad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
               <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.35);"></div>
@@ -1023,7 +1037,50 @@
     const ny = clamp(gy, -1, 1);
     setPadDot('sueEyeDot', nx, ny);
     const txt = document.getElementById('sueEyePadText');
-    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)}`;
+    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | lim=(${sueEyeConfig.limitX}%,${sueEyeConfig.limitY}%)`;
+  }
+
+  function updateSueEyeLimitPreview() {
+    const lxEl = document.getElementById('sueEyeLimitX');
+    const lyEl = document.getElementById('sueEyeLimitY');
+    if (!lxEl || !lyEl) return;
+    const lx = clamp(parseInt(lxEl.value, 10) || 100, 10, 100);
+    const ly = clamp(parseInt(lyEl.value, 10) || 100, 10, 100);
+    const txt = document.getElementById('sueEyeLimitText');
+    if (txt) txt.textContent = `Limit X: ${lx}% | Limit Y: ${ly}%`;
+  }
+
+  async function applySueEyeLimits(forceSend = true) {
+    const lxEl = document.getElementById('sueEyeLimitX');
+    const lyEl = document.getElementById('sueEyeLimitY');
+    if (!lxEl || !lyEl) return;
+    const lx = clamp(parseInt(lxEl.value, 10) || 100, 10, 100);
+    const ly = clamp(parseInt(lyEl.value, 10) || 100, 10, 100);
+    sueEyeConfig.limitX = lx;
+    sueEyeConfig.limitY = ly;
+    updateSueEyeLimitPreview();
+    if (forceSend) {
+      await sendRaw('/eye/limits', [lx, ly]);
+    }
+  }
+
+  function renderSuePupilAutoButton() {
+    const btn = document.getElementById('suePupilAutoBtn');
+    if (!btn) return;
+    btn.textContent = `Pupil Auto: ${sueEyeConfig.pupilAuto ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('bg-cyan-700', sueEyeConfig.pupilAuto);
+    btn.classList.toggle('bg-slate-600', !sueEyeConfig.pupilAuto);
+  }
+
+  async function toggleSuePupilAuto() {
+    sueEyeConfig.pupilAuto = !sueEyeConfig.pupilAuto;
+    renderSuePupilAutoButton();
+    await sendRaw('/eye/pupil_auto', [sueEyeConfig.pupilAuto ? 1 : 0]);
+  }
+
+  async function setSueTrackEnabled(enabled) {
+    await setTrackingEnabled(!!enabled);
+    await sendRaw('/track/auto', [enabled ? 1 : 0]);
   }
 
   async function sendSueOpenSpeed(openPct, speed, force = false) {
@@ -1077,8 +1134,8 @@
     const now = Date.now();
     if (!force && now - lastSueSendAt.eye < SUE_EYE_SEND_INTERVAL_MS) return;
     lastSueSendAt.eye = now;
-    const x = Math.round(clamp(nx, -1, 1) * 100);
-    const y = Math.round(clamp(ny, -1, 1) * 100);
+    const x = Math.round(clamp(nx, -1, 1) * sueEyeConfig.limitX);
+    const y = Math.round(clamp(ny, -1, 1) * sueEyeConfig.limitY);
     await sendRaw('/eye/look', [x, y]);
   }
 
@@ -1137,6 +1194,12 @@
 
     sendSueOpenSpeedFromSliders(true);
     sendSueEyeOpenFromSlider(true);
+    updateSueEyeLimitPreview();
+    applySueEyeLimits(false);
+    renderSuePupilAutoButton();
+    if (selected) {
+      sendRaw('/eye/pupil_auto', [sueEyeConfig.pupilAuto ? 1 : 0]);
+    }
     syncSueEyePadDot(0, 0);
   }
 
