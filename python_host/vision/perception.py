@@ -209,7 +209,7 @@ class PerceptionModule:
                     faces = self._tracker.get_all_faces()
                     face_bbox = None
                     if faces:
-                        primary = max(faces, key=lambda f: f["weight"])
+                        primary = max(faces, key=lambda f: f.get("area", 0))
                         face_bbox = (primary["x"], primary["y"], primary["w"], primary["h"])
 
                     vit_result = self._vit_detector.predict(frame, face_bbox)

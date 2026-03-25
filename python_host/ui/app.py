@@ -85,6 +85,7 @@ tracking_publisher = CoordinatePublisher(
     get_selected_node_type=lambda: _selected_node_type(),
     osc_sender=osc,
     serial_sender=serial_sender,
+    invert_x=True,
 )
 perception = PerceptionModule()
 
@@ -623,6 +624,7 @@ def api_tracking_config():
             deadband=payload.get("deadband") if "deadband" in payload else None,
             frame_width=payload.get("frame_width") if "frame_width" in payload else None,
             frame_height=payload.get("frame_height") if "frame_height" in payload else None,
+            invert_x=payload.get("invert_x") if "invert_x" in payload else None,
         )
 
         # Keep node-side auto mode aligned with panel toggle.
@@ -838,7 +840,7 @@ def create_app(camera_index=0, esp32_targets=None):
     _camera_running = False
     perception.stop()
     emotion_reactor.reset()
-    tracking_publisher.update_config(enabled=False, transport="osc")
+    tracking_publisher.update_config(enabled=False, transport="osc", invert_x=True)
     _set_control_mode(CONTROL_MODE_EMOTION_MANUAL, sync_target=False)
     serial_sender.disconnect()
     if esp32_targets:

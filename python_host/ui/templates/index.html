@@ -27,6 +27,10 @@
           <button id="stopCamera" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Stop</button>
           <span id="cameraStatus" class="text-xs text-slate-400">Camera: off</span>
         </div>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <button id="cameraMirrorToggle" class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1 text-xs">Preview Mirror: ON</button>
+          <span class="text-xs text-slate-500">Mirrors preview and flips tracking X publish</span>
+        </div>
         <h2 class="text-sm font-semibold text-slate-400 mb-2">Primary Face</h2>
         <div id="faceInfo" class="font-mono text-slate-300">Camera is off</div>
         <div class="mt-3 bg-slate-900 rounded p-3">
@@ -46,7 +50,14 @@
         <div class="mt-3 bg-slate-900 rounded p-3">
           <div class="flex items-center justify-between text-xs mb-2">
             <span class="text-slate-400">Real-Time Emotion Analysis Table</span>
-            <span id="emotionModelTag" class="text-slate-500">model: -</span>
+            <div class="flex items-center gap-2">
+              <select id="emotionModelSelect" class="bg-slate-700 rounded px-2 py-1 text-xs">
+                <option value="auto">Auto</option>
+                <option value="vit">ViT</option>
+                <option value="deepface">DeepFace</option>
+              </select>
+              <span id="emotionModelTag" class="text-slate-500">model: -</span>
+            </div>
           </div>
           <div class="overflow-x-auto max-h-40">
             <table class="w-full text-xs">
@@ -196,6 +207,7 @@
   let sylvieDrivePadState = { active: false, x: 0, y: 0 };
   let lastMotorSendAt = { 1: 0, 2: 0 };
   let faceDrivePadState = { active: false, x: 0, y: 0 };
+  let facePadInvertX = false;
   let faceSelectedPairs = new Set([1]);
   let facePairAngles = {
     1: { pan: 90, tilt: 90 },
@@ -207,7 +219,9 @@
   let lastFacePairSendAt = 0;
   let suePadState = { motionActive: false, eyeActive: false };
   let lastSueSendAt = { motion: 0, eye: 0 };
-  let sueEyeConfig = { limitX: 100, limitY: 100, pupilAuto: true };
+  let sueEyeConfig = { limitX: 100, limitY: 100, pupilAuto: true, invertX: false };
+  let cameraMirrorEnabled = true;
+  let emotionModelSelection = 'auto';
   let reactorConfigTimer = null;
   let reactorConfigLoaded = false;
   let showcaseMode = 'balanced';
@@ -299,11 +313,34 @@
     });
   }
 
+  function applyCameraMirrorUI() {
+    const img = document.getElementById('videoFeed');
+    if (img) {
+      img.style.transform = cameraMirrorEnabled ? 'scaleX(-1)' : 'scaleX(1)';
+      img.style.transformOrigin = 'center';
+    }
+    const btn = document.getElementById('cameraMirrorToggle');
+    if (btn) {
+      btn.textContent = `Preview Mirror: ${cameraMirrorEnabled ? 'ON' : 'OFF'}`;
+      btn.classList.toggle('bg-cyan-700', cameraMirrorEnabled);
+      btn.classList.toggle('bg-slate-700', !cameraMirrorEnabled);
+    }
+  }
+
+  async function setCameraMirrorEnabled(enabled, syncTracking = true) {
+    cameraMirrorEnabled = !!enabled;
+    applyCameraMirrorUI();
+    if (syncTracking) {
+      await postJSON('/api/tracking/config', { invert_x: cameraMirrorEnabled });
+    }
+  }
+
   async function refreshCameraState() {
     const s = await getJSON('/api/camera/state');
     const running = !!s.running;
     document.getElementById('cameraStatus').textContent = `Camera: ${running ? 'on' : 'off'} (index ${s.index})`;
     document.getElementById('videoFeed').src = running ? `/video_feed?ts=${Date.now()}` : '';
+    applyCameraMirrorUI();
     if (!running) {
       document.getElementById('faceInfo').textContent = 'Camera is off';
       renderReactorStatus(null, false);
@@ -359,29 +396,41 @@
 
     let rows = [];
     let sourceModel = reactor && reactor.source_model ? reactor.source_model : '-';
-    if (perception && perception.vit_emotion && Array.isArray(perception.vit_emotion.scores)) {
+    const wanted = emotionModelSelection || 'auto';
+    const hasVit = !!(perception && perception.vit_emotion && Array.isArray(perception.vit_emotion.scores));
+    const hasDeep = !!(perception && perception.emotion && perception.emotion.scores);
+    let useModel = wanted;
+    if (useModel === 'auto') {
+      useModel = hasVit ? 'vit' : (hasDeep ? 'deepface' : 'none');
+    }
+
+    if (useModel === 'vit' && hasVit) {
       const classes = Array.isArray(perception.vit_emotion.classes) ? perception.vit_emotion.classes : [];
       rows = perception.vit_emotion.scores.map((score, idx) => ({
         emotion: classes[idx] || `e${idx}`,
         score: Number(score || 0),
       }));
       sourceModel = 'vit';
-    } else if (perception && perception.emotion && perception.emotion.scores) {
+    } else if (useModel === 'deepface' && hasDeep) {
       rows = Object.entries(perception.emotion.scores).map(([emotion, score]) => ({
         emotion,
         score: Number(score || 0) > 1 ? Number(score || 0) / 100.0 : Number(score || 0),
       }));
       sourceModel = 'deepface';
+    } else if (useModel === 'vit' && !hasVit) {
+      sourceModel = 'vit(unavailable)';
+    } else if (useModel === 'deepface' && !hasDeep) {
+      sourceModel = 'deepface(unavailable)';
     }
 
     rows.sort((a, b) => b.score - a.score);
     if (!rows.length) {
-      modelTag.textContent = `model: ${sourceModel}`;
+      modelTag.textContent = `model: ${sourceModel} | selected: ${wanted}`;
       tbody.innerHTML = '<tr><td colspan="3" class="py-2 text-slate-500">No emotion scores yet</td></tr>';
       return;
     }
 
-    modelTag.textContent = `model: ${sourceModel}`;
+    modelTag.textContent = `model: ${sourceModel} | selected: ${wanted}`;
     tbody.innerHTML = rows.map((item) => {
       const pct = Math.max(0, Math.min(100, item.score * 100));
       return `
@@ -765,6 +814,7 @@
         <div class="flex gap-2">
           <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm" onclick="applyFaceAngleLimits(true)">Apply Limits to Node</button>
           <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm" onclick="centerFacePad()">Center XY</button>
+          <button id="facePadInvertXBtn" class="bg-slate-700 hover:bg-slate-600 rounded px-3 py-1 text-sm" onclick="toggleFacePadInvertX()">Face Pad X Invert: OFF</button>
         </div>
         <div class="bg-slate-900 rounded p-2">
           <div class="mb-1 text-xs text-slate-400">Face Tracking XY Panel (X: Pan, Y: Tilt)</div>
@@ -867,6 +917,7 @@
             </label>
             <div class="flex flex-col gap-1">
               <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-xs" onclick="applySueEyeLimits()">Apply Limits</button>
+              <button id="sueEyeInvertXBtn" class="bg-slate-700 hover:bg-slate-600 rounded px-3 py-1 text-xs" onclick="toggleSueEyeInvertX()">Gaze X Invert: OFF</button>
               <button id="suePupilAutoBtn" class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1 text-xs" onclick="toggleSuePupilAuto()">Pupil Auto: ON</button>
             </div>
           </div>
@@ -1037,7 +1088,7 @@
     const ny = clamp(gy, -1, 1);
     setPadDot('sueEyeDot', nx, ny);
     const txt = document.getElementById('sueEyePadText');
-    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | lim=(${sueEyeConfig.limitX}%,${sueEyeConfig.limitY}%)`;
+    if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | lim=(${sueEyeConfig.limitX}%,${sueEyeConfig.limitY}%) | invX:${sueEyeConfig.invertX ? 'on' : 'off'}`;
   }
 
   function updateSueEyeLimitPreview() {
@@ -1070,6 +1121,20 @@
     btn.textContent = `Pupil Auto: ${sueEyeConfig.pupilAuto ? 'ON' : 'OFF'}`;
     btn.classList.toggle('bg-cyan-700', sueEyeConfig.pupilAuto);
     btn.classList.toggle('bg-slate-600', !sueEyeConfig.pupilAuto);
+  }
+
+  function renderSueEyeInvertButton() {
+    const btn = document.getElementById('sueEyeInvertXBtn');
+    if (!btn) return;
+    btn.textContent = `Gaze X Invert: ${sueEyeConfig.invertX ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('bg-cyan-700', sueEyeConfig.invertX);
+    btn.classList.toggle('bg-slate-700', !sueEyeConfig.invertX);
+  }
+
+  function toggleSueEyeInvertX() {
+    sueEyeConfig.invertX = !sueEyeConfig.invertX;
+    renderSueEyeInvertButton();
+    syncSueEyePadDot(0, 0);
   }
 
   async function toggleSuePupilAuto() {
@@ -1134,7 +1199,8 @@
     const now = Date.now();
     if (!force && now - lastSueSendAt.eye < SUE_EYE_SEND_INTERVAL_MS) return;
     lastSueSendAt.eye = now;
-    const x = Math.round(clamp(nx, -1, 1) * sueEyeConfig.limitX);
+    const xNorm = sueEyeConfig.invertX ? -nx : nx;
+    const x = Math.round(clamp(xNorm, -1, 1) * sueEyeConfig.limitX);
     const y = Math.round(clamp(ny, -1, 1) * sueEyeConfig.limitY);
     await sendRaw('/eye/look', [x, y]);
   }
@@ -1196,6 +1262,7 @@
     sendSueEyeOpenFromSlider(true);
     updateSueEyeLimitPreview();
     applySueEyeLimits(false);
+    renderSueEyeInvertButton();
     renderSuePupilAutoButton();
     if (selected) {
       sendRaw('/eye/pupil_auto', [sueEyeConfig.pupilAuto ? 1 : 0]);
@@ -1346,10 +1413,25 @@
 
   function faceNormToAngles(nx, ny) {
     const limits = faceAngleLimits;
+    const xForMap = facePadInvertX ? -nx : nx;
     // Match tracking mapping direction: rightward X mirrors to smaller pan.
-    const pan = normToValue(nx, limits.pan_max, limits.pan_min);
+    const pan = normToValue(xForMap, limits.pan_max, limits.pan_min);
     const tilt = normToValue(ny, limits.tilt_min, limits.tilt_max);
     return { pan, tilt };
+  }
+
+  function renderFacePadInvertButton() {
+    const btn = document.getElementById('facePadInvertXBtn');
+    if (!btn) return;
+    btn.textContent = `Face Pad X Invert: ${facePadInvertX ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('bg-cyan-700', facePadInvertX);
+    btn.classList.toggle('bg-slate-700', !facePadInvertX);
+  }
+
+  function toggleFacePadInvertX() {
+    facePadInvertX = !facePadInvertX;
+    renderFacePadInvertButton();
+    updateFacePadDot(faceDrivePadState.x, faceDrivePadState.y);
   }
 
   function updateFacePadDot(nx, ny, overrideAngles = null) {
@@ -1362,7 +1444,7 @@
     const angles = overrideAngles || faceNormToAngles(nx, ny);
     if (txt) {
       const pairs = selectedFacePairsSorted();
-      txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | Pan:${angles.pan} Tilt:${angles.tilt} | pairs:[${pairs.join(',')}]`;
+      txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)} | Pan:${angles.pan} Tilt:${angles.tilt} | pairs:[${pairs.join(',')}] | invX:${facePadInvertX ? 'on' : 'off'}`;
     }
   }
 
@@ -1432,6 +1514,7 @@
     };
     pad.onpointerup = release;
     pad.onpointercancel = release;
+    renderFacePadInvertButton();
     updateFacePadDot(faceDrivePadState.x, faceDrivePadState.y);
   }
 
@@ -1461,7 +1544,7 @@
   }
 
   async function setTrackingEnabled(enabled) {
-    await postJSON('/api/tracking/config', { enabled: !!enabled });
+    await postJSON('/api/tracking/config', { enabled: !!enabled, invert_x: cameraMirrorEnabled });
     if (enabled) {
       await setControlMode('face_tracking', false);
     }
@@ -1476,6 +1559,7 @@
       transport,
       serial_port: serialPort,
       serial_baud: serialBaud,
+      invert_x: cameraMirrorEnabled,
     });
     await refreshTrackingUI();
   }
@@ -1536,6 +1620,11 @@
 
   async function refreshTrackingUI() {
     await getTrackingConfig();
+    const t = (trackingState && trackingState.tracking) ? trackingState.tracking : {};
+    if (typeof t.invert_x === 'boolean') {
+      cameraMirrorEnabled = !!t.invert_x;
+      applyCameraMirrorUI();
+    }
     await refreshSerialPorts(false);
     renderTrackingStatus();
     renderControlModeUI();
@@ -1550,7 +1639,7 @@
     const targetText = trackingState.selected_target || '-';
     const connected = s.connected ? 'connected' : 'disconnected';
     controlModeState = trackingState.control_mode || controlModeState;
-    el.textContent = `mode:${controlModeState} | auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
+    el.textContent = `mode:${controlModeState} | auto:${t.enabled ? 'on' : 'off'} | transport:${t.transport || '-'} | invertX:${t.invert_x ? 'on' : 'off'} | target:${targetText} | serial:${connected} ${s.port || ''} | last:${t.last_result || '-'}`;
 
     const transportSel = document.getElementById('trackTransport');
     if (transportSel && t.transport) transportSel.value = t.transport;
@@ -1766,6 +1855,15 @@
         await refreshCameraState();
       };
 
+      document.getElementById('cameraMirrorToggle').onclick = async () => {
+        await setCameraMirrorEnabled(!cameraMirrorEnabled, true);
+        await refreshTrackingUI();
+      };
+
+      document.getElementById('emotionModelSelect').onchange = (ev) => {
+        emotionModelSelection = String(ev.target.value || 'auto');
+      };
+
       setInterval(async () => {
         try {
           const data = await getJSON('/api/faces');
@@ -1777,7 +1875,9 @@
             return;
           }
           if (data.primary) {
-            const wx = data.weighted ? Number(data.weighted[0]).toFixed(3) : Number(data.primary[0]).toFixed(3);
+            const rawX = data.weighted ? Number(data.weighted[0]) : Number(data.primary[0]);
+            const showX = cameraMirrorEnabled ? (1.0 - rawX) : rawX;
+            const wx = showX.toFixed(3);
             const wy = data.weighted ? Number(data.weighted[1]).toFixed(3) : Number(data.primary[1]).toFixed(3);
             const wc = data.weighted ? Number(data.weighted[3] || 1) : 1;
             const wa = data.weighted ? Number(data.weighted[2] || 0).toFixed(1) : Number(data.primary[2] || 0).toFixed(1);
@@ -1796,12 +1896,13 @@
       bindShowcaseModeButtons();
       await loadReactorConfig();
       await loadEmotionOverrideState();
+      applyCameraMirrorUI();
       await refreshCameraState();
       await refreshDevices();
       renderTabs();
       await loadSequences();
       await refreshHistory();
-      await getTrackingConfig();
+      await refreshTrackingUI();
     } catch (err) {
       console.error('init failed', err);
       document.getElementById('connStatus').textContent = `Init error: ${err.message || err}`;

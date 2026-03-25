@@ -18,6 +18,7 @@ class CoordinatePublisher:
         serial_sender=None,
         frame_width=1920,
         frame_height=1080,
+        invert_x=False,
     ):
         self._get_primary_target = get_primary_target
         self._get_selected_target = get_selected_target
@@ -32,6 +33,7 @@ class CoordinatePublisher:
         self._transport = "osc"
         self._rate_hz = 20.0
         self._deadband = 0.01
+        self._invert_x = bool(invert_x)
 
         self._last_norm = None
         self._last_sent_ts = 0.0
@@ -51,6 +53,7 @@ class CoordinatePublisher:
         deadband=None,
         frame_width=None,
         frame_height=None,
+        invert_x=None,
     ):
         with self._lock:
             if enabled is not None:
@@ -67,6 +70,8 @@ class CoordinatePublisher:
                 self._frame_width = max(1, int(frame_width))
             if frame_height is not None:
                 self._frame_height = max(1, int(frame_height))
+            if invert_x is not None:
+                self._invert_x = bool(invert_x)
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -77,6 +82,7 @@ class CoordinatePublisher:
                 "deadband": self._deadband,
                 "frame_width": self._frame_width,
                 "frame_height": self._frame_height,
+                "invert_x": self._invert_x,
                 "last_sent_ts": self._last_sent_ts,
                 "last_result": self._last_result,
             }
@@ -110,6 +116,8 @@ class CoordinatePublisher:
 
             nx = max(0.0, min(1.0, float(target[0])))
             ny = max(0.0, min(1.0, float(target[1])))
+            if cfg.get("invert_x"):
+                nx = 1.0 - nx
             if not self._should_send(nx, ny, cfg["deadband"]):
                 time.sleep(period)
                 continue
