@@ -57,14 +57,32 @@ class ViTEmotionDetector:
             model_source, local_only = self._resolve_model_source()
             logger.info("Loading ViT model from %s (local_only=%s)", model_source, local_only)
 
-            self._model = ViTForImageClassification.from_pretrained(
-                model_source,
-                local_files_only=local_only,
-            ).to(self._device)
-            self._processor = ViTImageProcessor.from_pretrained(
-                model_source,
-                local_files_only=local_only,
-            )
+            def _load_pair(source, only_local):
+                model = ViTForImageClassification.from_pretrained(
+                    source,
+                    local_files_only=only_local,
+                ).to(self._device)
+                processor = ViTImageProcessor.from_pretrained(
+                    source,
+                    local_files_only=only_local,
+                )
+                return model, processor
+
+            try:
+                self._model, self._processor = _load_pair(model_source, local_only)
+            except Exception as local_exc:
+                # Local model directory exists but is incomplete/corrupt:
+                # fallback to remote repo so first-run bootstrap can recover.
+                if local_only and model_source != self._repo_id:
+                    logger.warning(
+                        "Local ViT model load failed (%s). Falling back to repo %s",
+                        local_exc,
+                        self._repo_id,
+                    )
+                    self._model, self._processor = _load_pair(self._repo_id, False)
+                else:
+                    raise
+
             self._model.eval()
 
             self._loaded = True

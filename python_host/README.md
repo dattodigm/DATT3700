@@ -25,6 +25,25 @@ python -m python_host.main --port 15000
 
 Open `http://127.0.0.1:15000`.
 
+## New machine ML bootstrap (ViT + DeepFace)
+
+Use this once per new device to download and cache ML model assets locally:
+
+```bash
+python -m pip install -r python_host/requirements-ml.txt
+python -m python_host.bootstrap_ml_models --verify-vit-local
+```
+
+What this does:
+- Downloads `yst007/vit-emotion` into `python_host/models/vit-emotion`
+- Warms up DeepFace emotion inference so model weights are cached
+- Verifies ViT can load in local-only mode
+
+Recommended offline validation:
+1. Disconnect network
+2. Start the app: `python -m python_host.main --port 15000`
+3. Confirm emotion inference still works for both ViT and DeepFace
+
 ## Key API endpoints
 
 - `POST /api/devices/scan` with `{"mode":"mdns|gateway|auto"}`
@@ -35,6 +54,7 @@ Open `http://127.0.0.1:15000`.
 - `POST /api/devices/select`
 - `POST /api/osc/raw`
 - `GET /api/osc/history`
+- `POST /api/osc/history/clear`
 - `GET /api/serial/ports?scan=1`
 - `POST /api/serial/raw`
 - `GET|POST /api/tracking/config`

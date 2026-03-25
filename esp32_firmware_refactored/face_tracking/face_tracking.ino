@@ -36,8 +36,8 @@ const int SERIAL_TIMEOUT_MS = 20;
 
 const int PAN_MIN_DEFAULT = 20;
 const int PAN_MAX_DEFAULT = 160;
-const int TILT_MIN_DEFAULT = 20;
-const int TILT_MAX_DEFAULT = 160;
+const int TILT_MIN_DEFAULT = 50;
+const int TILT_MAX_DEFAULT = 180;
 
 const int DEAD_BAND_DEG_DEFAULT = 1;
 const int SMOOTH_PCT_DEFAULT = 40;

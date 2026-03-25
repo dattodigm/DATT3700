@@ -185,6 +185,17 @@
         <div class="flex gap-2 mb-3">
           <button id="sendRawOSC" class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1 text-sm font-semibold">Send OSC</button>
           <button id="refreshHistory" class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1 text-sm font-semibold">Refresh Log</button>
+          <button id="clearHistory" class="bg-rose-700 hover:bg-rose-600 rounded px-3 py-1 text-sm font-semibold">Clear Log</button>
+        </div>
+        <div class="flex flex-wrap gap-3 mb-3 text-xs text-slate-300 items-center">
+          <label class="inline-flex items-center gap-2">
+            <span>History limit</span>
+            <input id="oscHistoryLimit" type="number" min="10" max="500" step="10" value="80" class="bg-slate-700 rounded px-2 py-1 w-20">
+          </label>
+          <label class="inline-flex items-center gap-2">
+            <input id="oscAutoRefresh" type="checkbox" class="h-3.5 w-3.5 accent-emerald-500" checked>
+            <span>Auto refresh (1.5s)</span>
+          </label>
         </div>
         <pre id="oscLog" class="bg-slate-900 rounded p-3 text-xs overflow-auto max-h-72"></pre>
       </div>
@@ -225,6 +236,9 @@
   let reactorConfigTimer = null;
   let reactorConfigLoaded = false;
   let showcaseMode = 'balanced';
+  let oscHistoryLimit = 80;
+  let oscAutoRefreshEnabled = true;
+  let oscHistoryTimer = null;
   const SYLVIE_DEADBAND = 20;
   const SYLVIE_MIN_EFFECTIVE = 150;
   const SYLVIE_SEND_INTERVAL_MS = 40;
@@ -1291,12 +1305,54 @@
   }
 
   async function refreshHistory() {
-    const data = await getJSON('/api/osc/history?limit=30');
+    const data = await getJSON(`/api/osc/history?limit=${oscHistoryLimit}`);
     const items = (data.items || []).map((item) => {
       const dt = new Date(item.ts * 1000).toLocaleTimeString();
-      return `[${dt}] ${item.direction.toUpperCase()} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})`;
+      const dir = String(item.direction || '-').toUpperCase();
+      const reason = item.reason ? ` reason=${item.reason}` : '';
+      const source = item.source ? ` src=${item.source}` : '';
+      return `[${dt}] ${dir} ${item.address} ${JSON.stringify(item.args)} (${item.ip || item.target || '-'})${source}${reason}`;
     });
     document.getElementById('oscLog').textContent = items.join('\n');
+  }
+
+  function syncOscHistoryControls() {
+    const limitInput = document.getElementById('oscHistoryLimit');
+    if (limitInput) {
+      limitInput.value = `${oscHistoryLimit}`;
+    }
+    const autoBox = document.getElementById('oscAutoRefresh');
+    if (autoBox) {
+      autoBox.checked = !!oscAutoRefreshEnabled;
+    }
+  }
+
+  async function applyOscHistorySettings() {
+    const limitInput = document.getElementById('oscHistoryLimit');
+    const autoBox = document.getElementById('oscAutoRefresh');
+    const rawLimit = limitInput ? parseInt(limitInput.value, 10) : oscHistoryLimit;
+    oscHistoryLimit = clamp(rawLimit || 80, 10, 500);
+    oscAutoRefreshEnabled = !!(autoBox ? autoBox.checked : oscAutoRefreshEnabled);
+    syncOscHistoryControls();
+    startOscHistoryPolling();
+    await refreshHistory();
+  }
+
+  function startOscHistoryPolling() {
+    if (oscHistoryTimer) {
+      clearInterval(oscHistoryTimer);
+      oscHistoryTimer = null;
+    }
+    if (!oscAutoRefreshEnabled) return;
+    oscHistoryTimer = setInterval(() => {
+      refreshHistory().catch(() => {});
+    }, 1500);
+  }
+
+  async function clearHistory() {
+    await postJSON('/api/osc/history/clear', {});
+    document.getElementById('oscLog').textContent = '';
+    await refreshHistory();
   }
 
   async function addManualDevice() {
@@ -1818,6 +1874,18 @@
         await sendRaw(address, args);
         await refreshHistory();
       };
+      document.getElementById('refreshHistory').onclick = async () => {
+        try { await refreshHistory(); } catch (e) { console.error(e); }
+      };
+      document.getElementById('clearHistory').onclick = async () => {
+        try { await clearHistory(); } catch (e) { console.error(e); }
+      };
+      document.getElementById('oscHistoryLimit').onchange = async () => {
+        try { await applyOscHistorySettings(); } catch (e) { console.error(e); }
+      };
+      document.getElementById('oscAutoRefresh').onchange = async () => {
+        try { await applyOscHistorySettings(); } catch (e) { console.error(e); }
+      };
 
       document.getElementById('seqRecordToggle').onclick = async () => {
         recording = !recording;
@@ -1901,6 +1969,8 @@
       await refreshDevices();
       renderTabs();
       await loadSequences();
+      syncOscHistoryControls();
+      startOscHistoryPolling();
       await refreshHistory();
       await refreshTrackingUI();
     } catch (err) {

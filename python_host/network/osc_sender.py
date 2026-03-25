@@ -69,12 +69,13 @@ def _parse_osc_message(data):
 class OSCSender:
     """Manages one or more ESP32 OSC targets with a send queue."""
 
-    def __init__(self):
+    def __init__(self, history_size=500):
         self._clients = {}       # name -> SimpleUDPClient
         self._target_info = {}   # name -> (ip, port)
         self._lock = threading.Lock()
         self._override = False   # True = manual UI only, block CV auto
-        self._history = deque(maxlen=200)
+        size = max(50, int(history_size))
+        self._history = deque(maxlen=size)
 
     # ------------------------------------------------------------------
     # Target management
@@ -106,21 +107,44 @@ class OSCSender:
     def override(self, value):
         self._override = bool(value)
 
-    def _push_history(self, direction, address, args, target_name=None, ip=None, port=None):
-        self._history.append(
-            {
-                "ts": time.time(),
-                "direction": direction,
-                "target": target_name,
-                "ip": ip,
-                "port": port,
-                "address": address,
-                "args": list(args or []),
-            }
-        )
+    def _push_history(
+        self,
+        direction,
+        address,
+        args,
+        target_name=None,
+        ip=None,
+        port=None,
+        reason=None,
+        source=None,
+    ):
+        item = {
+            "ts": time.time(),
+            "direction": direction,
+            "target": target_name,
+            "ip": ip,
+            "port": port,
+            "address": address,
+            "args": list(args or []),
+        }
+        if reason is not None:
+            item["reason"] = str(reason)
+        if source is not None:
+            item["source"] = str(source)
+        with self._lock:
+            self._history.append(item)
 
     def get_history(self, limit=80):
-        return list(self._history)[-int(limit):]
+        n = max(1, int(limit))
+        with self._lock:
+            return list(self._history)[-n:]
+
+    def clear_history(self):
+        with self._lock:
+            self._history.clear()
+
+    def get_history_capacity(self):
+        return int(self._history.maxlen or 0)
 
     # ------------------------------------------------------------------
     # Send helpers
@@ -133,16 +157,54 @@ class OSCSender:
         source="manual" → always sent
         """
         if source == "auto" and self._override:
+            self._push_history(
+                "drop",
+                address,
+                args,
+                target_name=target_name,
+                reason="override_blocked",
+                source=source,
+            )
             return False  # manual override active, ignore CV commands
 
         with self._lock:
             client = self._clients.get(target_name)
             target = self._target_info.get(target_name)
         if client is None:
+            self._push_history(
+                "drop",
+                address,
+                args,
+                target_name=target_name,
+                reason="unknown_target",
+                source=source,
+            )
             return False
-        client.send_message(address, list(args))
+        try:
+            client.send_message(address, list(args))
+        except OSError as exc:
+            ip, port = target if target else (None, None)
+            self._push_history(
+                "drop",
+                address,
+                args,
+                target_name=target_name,
+                ip=ip,
+                port=port,
+                reason=f"send_error:{exc}",
+                source=source,
+            )
+            return False
         ip, port = target if target else (None, None)
-        self._push_history("tx", address, args, target_name=target_name, ip=ip, port=port)
+        self._push_history(
+            "tx",
+            address,
+            args,
+            target_name=target_name,
+            ip=ip,
+            port=port,
+            source=source,
+        )
         return True
 
     def send_raw(self, target_name, address, args=None, source="manual"):
@@ -188,10 +250,10 @@ class OSCSender:
             sock.settimeout(timeout)
             sock.bind(("0.0.0.0", 0))
             sock.sendto(packet, (ip, int(port)))
-            self._push_history("tx", address, args or [], ip=ip, port=port)
+            self._push_history("tx", address, args or [], ip=ip, port=port, source="query")
             data, src = sock.recvfrom(2048)
             reply_addr, reply_args = _parse_osc_message(data)
-            self._push_history("rx", reply_addr, reply_args, ip=src[0], port=src[1])
+            self._push_history("rx", reply_addr, reply_args, ip=src[0], port=src[1], source="query")
             return {"address": reply_addr, "args": reply_args, "ip": src[0], "port": src[1]}
         except OSError:
             return None

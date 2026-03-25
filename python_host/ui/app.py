@@ -557,8 +557,18 @@ def api_osc_raw():
 
 @app.route("/api/osc/history")
 def api_osc_history():
-    limit = int(request.args.get("limit", 80))
-    return jsonify({"items": osc.get_history(limit=limit)})
+    try:
+        limit = int(request.args.get("limit", 80))
+    except (TypeError, ValueError):
+        limit = 80
+    limit = max(1, min(limit, 2000))
+    return jsonify({"items": osc.get_history(limit=limit), "limit": limit, "capacity": osc.get_history_capacity()})
+
+
+@app.route("/api/osc/history/clear", methods=["POST"])
+def api_osc_history_clear():
+    osc.clear_history()
+    return jsonify({"status": "ok", "capacity": osc.get_history_capacity()})
 
 
 @app.route("/api/osc/motor", methods=["POST"])
