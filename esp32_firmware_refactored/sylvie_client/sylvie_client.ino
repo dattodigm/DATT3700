@@ -2,19 +2,10 @@
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <OSCMessage.h>
-#include <esp_wifi.h>
-#include <esp_event.h>
 
 // ============================================================
 // ⚙️  CONFIG — 所有可调参数都在这里修改
 // ============================================================
-
-// --- 模式选择：true = 热点模式(AP)，false = 连接已有WiFi(STA) ---
-#define USE_AP_MODE  false
-
-// --- 热点模式配置 ---
-const char* AP_SSID     = "F7OWER";
-const char* AP_PASSWORD = "12345678";
 
 // --- Station模式配置（连接已有WiFi）---
 const char* STA_SSID     = "MisAXNet";
@@ -26,25 +17,17 @@ const char* MDNS_NAME = "sylvie";
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;
 
-// --- 热点客户端扫描间隔（毫秒）---
-// const unsigned long CLIENT_SCAN_INTERVAL = 5000;
+const int WIFI_BOOT_CONNECT_ATTEMPTS = 24;
+const int WIFI_AUTO_RETRY_ATTEMPTS = 10;
+const int WIFI_MANUAL_RETRY_DEFAULT = 6;
+const int WIFI_RETRY_DELAY_MS = 500;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 6000;
 
 // --- 引脚定义 ---
 const int M1_A = 25, M1_B = 26;
 const int L1_R = 2,  L1_G = 4,  L1_B_PIN = 5;
 const int M2_A = 18, M2_B = 19;
 const int L2_R = 12, L2_G = 13, L2_B_PIN = 14;
-
-// ============================================================
-// 客户端信息结构
-// ============================================================
-struct ClientInfo {
-  uint8_t mac[6];
-  uint32_t ip;
-  bool active;
-};
-#define MAX_CLIENTS 5
-ClientInfo clients[MAX_CLIENTS];
 
 // ============================================================
 // 运行时变量
@@ -54,6 +37,9 @@ bool autoMode = true;
 unsigned long lastAutoUpdate = 0;
 // unsigned long lastClientScan = 0;
 int autoState = 0;
+unsigned long lastWifiRetryMs = 0;
+int wifiManualRetryAttempts = WIFI_MANUAL_RETRY_DEFAULT;
+bool mdnsStarted = false;
 // ── 前向声明 ────────────────────────────────────────────────
 void setMotor(int motor, int direction);
 void setLED(int led, int r, int g, int b);
@@ -68,85 +54,75 @@ void routeLED2(OSCMessage &msg, int addrOffset);
 void routePreset(OSCMessage &msg, int addrOffset);
 void printConnectedClients();
 void printSelfInfo();
+void printWifiStatus();
+void manualWifiRetry(int attempts);
+void ensureWifiConnected();
+void ensureMDNS();
 void handleSerialCommand();
 void sendClientListOSC(OSCMessage &msg, int addrOffset);
 void sendSelfInfoOSC(OSCMessage &msg, int addrOffset);
 // ────────────────────────────────────────────────────────────
 // ============================================================
-// WiFi 事件处理
+// WiFi / mDNS
 // ============================================================
-void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
-  switch (event) {
+bool connectWifiWithAttempts(int attempts, bool verbose) {
+  attempts = constrain(attempts, 1, 120);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  WiFi.begin(STA_SSID, STA_PASSWORD);
 
-    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-      Serial.printf("\n🔌 客户端已连接  MAC: %02X:%02X:%02X:%02X:%02X:%02X（等待 DHCP 分配 IP...）\n",
-        info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
-        info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
-        info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
-      break;
-
-    case ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED:
-      {
-        ip_event_ap_staipassigned_t* event_data = (ip_event_ap_staipassigned_t*)&info.wifi_ap_staipassigned;
-        uint32_t ip = event_data->ip.addr;
-        uint8_t* mac = event_data->mac;
-        Serial.printf("✅ IP 已分配  MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
-          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-          ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-          if (!clients[i].active) {
-            memcpy(clients[i].mac, mac, 6);
-            clients[i].ip = ip;
-            clients[i].active = true;
-            break;
-          }
-        }
-        printConnectedClients();
+  if (verbose) Serial.print("[Net] Connecting");
+  for (int i = 0; i < attempts; i++) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (verbose) {
+        Serial.print("\n[Net] Connected, IP: ");
+        Serial.println(WiFi.localIP());
       }
-      break;
+      return true;
+    }
+    delay(WIFI_RETRY_DELAY_MS);
+    if (verbose) Serial.print(".");
+  }
 
-    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-      {
-        uint8_t* mac = info.wifi_ap_stadisconnected.mac;
-        Serial.printf("❌ 客户端已断开  MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
-          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-          if (clients[i].active && memcmp(clients[i].mac, mac, 6) == 0) {
-            clients[i].active = false;
-            break;
-          }
-        }
-        printConnectedClients();
-      }
-      break;
+  if (verbose) Serial.println("\n[Net] STA connect failed");
+  return WiFi.status() == WL_CONNECTED;
+}
 
-    default: break;
+void setupNetwork() {
+  if (!connectWifiWithAttempts(WIFI_BOOT_CONNECT_ATTEMPTS, true)) {
+    Serial.println("[Net] Boot without WiFi, auto-retry enabled");
   }
 }
 
-// ============================================================
-// WiFi 初始化
-// ============================================================
-void setupWiFi() {
-  if (USE_AP_MODE) {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASSWORD);
-    Serial.print("✅ AP模式已启动，IP: ");
-    Serial.println(WiFi.softAPIP());
-  } else {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(STA_SSID, STA_PASSWORD);
-    Serial.print("🔗 连接WiFi中");
-    int retry = 0;
-    while (WiFi.status() != WL_CONNECTED && retry < 20) {
-      delay(500); Serial.print("."); retry++;
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.print("\n✅ STA模式已连接，IP: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("\n❌ WiFi连接失败，请检查 STA_SSID / STA_PASSWORD");
-    }
+void ensureWifiConnected() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  unsigned long now = millis();
+  if (now - lastWifiRetryMs < WIFI_RETRY_INTERVAL_MS) return;
+  lastWifiRetryMs = now;
+  Serial.println("[Net] WiFi disconnected, retrying...");
+  connectWifiWithAttempts(WIFI_AUTO_RETRY_ATTEMPTS, false);
+}
+
+void setupMDNS() {
+  if (mdnsStarted) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!MDNS.begin(MDNS_NAME)) {
+    Serial.println("[Net] mDNS failed");
+    return;
+  }
+  MDNS.addService("osc", "udp", OSC_PORT);
+  MDNS.addService("datt_flower", "tcp", OSC_PORT);
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_type", "sylvie");
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_id", MDNS_NAME);
+  mdnsStarted = true;
+  Serial.printf("[Net] mDNS ready: %s.local\n", MDNS_NAME);
+}
+
+void ensureMDNS() {
+  if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
+    setupMDNS();
   }
 }
 
@@ -154,19 +130,7 @@ void setupWiFi() {
 // 打印当前在线客户端（AP 模式）
 // ============================================================
 void printConnectedClients() {
-  if (!USE_AP_MODE) return;
-  int count = WiFi.softAPgetStationNum();
-  Serial.printf("\n📡 当前在线客户端：%d\n", count);
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (clients[i].active) {
-      uint32_t ip = clients[i].ip;
-      Serial.printf("  [%d] MAC: %02X:%02X:%02X:%02X:%02X:%02X  IP: %d.%d.%d.%d\n",
-        i,
-        clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
-        clients[i].mac[3], clients[i].mac[4], clients[i].mac[5],
-        ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
-    }
-  }
+  Serial.println("[Net] AP client list disabled in STA-only firmware");
 }
 
 // ============================================================
@@ -181,23 +145,37 @@ void printSelfInfo() {
   Serial.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-  if (USE_AP_MODE) {
-    Serial.printf("模式：AP (热点)\n");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("模式：STA (客户端)\n");
     Serial.printf("IP: %d.%d.%d.%d\n",
-      WiFi.softAPIP()[0], WiFi.softAPIP()[1],
-      WiFi.softAPIP()[2], WiFi.softAPIP()[3]);
+      WiFi.localIP()[0], WiFi.localIP()[1],
+      WiFi.localIP()[2], WiFi.localIP()[3]);
   } else {
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("模式：STA (客户端)\n");
-      Serial.printf("IP: %d.%d.%d.%d\n",
-        WiFi.localIP()[0], WiFi.localIP()[1],
-        WiFi.localIP()[2], WiFi.localIP()[3]);
-    } else {
-      Serial.println("模式：STA (未连接)");
-      Serial.println("IP: 未分配");
-    }
+    Serial.println("模式：STA (未连接)");
+    Serial.println("IP: 未分配");
   }
   Serial.println("====================\n");
+}
+
+void printWifiStatus() {
+  wl_status_t st = WiFi.status();
+  Serial.println("\n=== WiFi Status ===");
+  Serial.printf("SSID: %s\n", STA_SSID);
+  Serial.printf("Status: %d\n", (int)st);
+  if (st == WL_CONNECTED) {
+    Serial.printf("IP: %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+    Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+  } else {
+    Serial.println("IP: (not connected)");
+  }
+  Serial.println("===================\n");
+}
+
+void manualWifiRetry(int attempts) {
+  wifiManualRetryAttempts = constrain(attempts, 1, 120);
+  Serial.printf("[Net] Manual retry, attempts=%d\n", wifiManualRetryAttempts);
+  bool ok = connectWifiWithAttempts(wifiManualRetryAttempts, true);
+  if (ok) ensureMDNS();
 }
 
 // ============================================================
@@ -234,13 +212,15 @@ void handleSerialCommand() {
     setPreset(p);
     Serial.printf("预设场景：%d\n", p);
   } else if (line.equals("clients")) {
-    if (USE_AP_MODE) {
-      printConnectedClients();
-    } else {
-      Serial.println("⚠️ 仅在 AP 模式下有效");
-    }
+    printConnectedClients();
   } else if (line.equals("selfinfo")) {
     printSelfInfo();
+  } else if (line.equals("wifi status")) {
+    printWifiStatus();
+  } else if (line.startsWith("wifi retry")) {
+    int attempts = wifiManualRetryAttempts;
+    sscanf(line.c_str(), "wifi retry %d", &attempts);
+    manualWifiRetry(attempts);
   }
 }
 
@@ -249,22 +229,16 @@ void handleSerialCommand() {
 // ============================================================
 void setup() {
   Serial.begin(115200);
-  memset(clients, 0, sizeof(clients));
 
   int pins[] = {M1_A, M1_B, M2_A, M2_B, L1_R, L1_G, L1_B_PIN, L2_R, L2_G, L2_B_PIN};
   for (int p : pins) pinMode(p, OUTPUT);
 
-  WiFi.onEvent(onWifiEvent);
-  setupWiFi();
-
-  if (MDNS.begin(MDNS_NAME)) {
-    Serial.printf("✅ mDNS 已启动: http://%s.local\n", MDNS_NAME);
-    MDNS.addService("osc", "udp", OSC_PORT);
-  }
+  setupNetwork();
+  setupMDNS();
 
   udp.begin(OSC_PORT);
   Serial.printf("✅ OSC 监听端口: %d\n", OSC_PORT);
-  Serial.println("📋 串口命令: motor1 1 | motor2 -1 | led1 255 0 0 | led2 0 255 255 | auto 0 | preset 2");
+  Serial.println("📋 串口命令: motor1 1 | motor2 -1 | led1 255 0 0 | led2 0 255 255 | auto 0 | preset 2 | wifi status | wifi retry 6");
 }
 
 // ============================================================
@@ -288,6 +262,8 @@ void loop() {
   }
 
   handleSerialCommand();
+  ensureWifiConnected();
+  ensureMDNS();
 
   if (autoMode) runAutoMode();
 }
@@ -425,28 +401,9 @@ void stopAll() {
 // OSC 信息查询命令
 // ============================================================
 void sendClientListOSC(OSCMessage &msg, int addrOffset) {
-  if (!USE_AP_MODE) return;
-
   OSCMessage reply("/info/clients");
-  int count = WiFi.softAPgetStationNum();
-  reply.add((int32_t)count);
-
-  for (int i = 0; i < MAX_CLIENTS; i++) {
-    if (clients[i].active) {
-      uint32_t ip = clients[i].ip;
-      char macStr[18];
-      sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
-        clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
-        clients[i].mac[3], clients[i].mac[4], clients[i].mac[5]);
-
-      char ipStr[16];
-      sprintf(ipStr, "%d.%d.%d.%d",
-        ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
-
-      reply.add(macStr);
-      reply.add(ipStr);
-    }
-  }
+  // STA-only firmware: keep endpoint for host compatibility.
+  reply.add((int32_t)0);
 
   udp.beginPacket(udp.remoteIP(), udp.remotePort());
   reply.send(udp);
@@ -467,12 +424,12 @@ void sendSelfInfoOSC(OSCMessage &msg, int addrOffset) {
   reply.add(macStr);
 
   char modeStr[10];
-  strcpy(modeStr, USE_AP_MODE ? "AP" : "STA");
+  strcpy(modeStr, "STA");
   reply.add(modeStr);
 
   char ipStr[16];
-  if (USE_AP_MODE || WiFi.status() == WL_CONNECTED) {
-    IPAddress ip = USE_AP_MODE ? WiFi.softAPIP() : WiFi.localIP();
+  if (WiFi.status() == WL_CONNECTED) {
+    IPAddress ip = WiFi.localIP();
     sprintf(ipStr, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
   } else {
     strcpy(ipStr, "0.0.0.0");

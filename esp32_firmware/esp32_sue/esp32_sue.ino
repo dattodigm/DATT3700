@@ -46,10 +46,13 @@ Servo servo1;
 void drawStaticEye()
 {
   panel->fillScreen(BLACK);
+  // eyeball
   panel->fillCircle(CX, CY, 65, SCLERA);
+  // iris
   panel->fillCircle(CX, CY, 30, IRIS_DARK);
   panel->fillCircle(CX, CY, 24, IRIS_MID);
   panel->fillCircle(CX, CY, 16, IRIS_LIGHT);
+  
   panel->fillRoundRect(35, 40, 170, 20, 10, SHADOW);
 }
 
@@ -99,7 +102,7 @@ void setup()
 
 void loop()
 {
-  // sweep 0 → 120
+  // sweep 0 → 180
   for (int pos = 0; pos <= 120; pos++)
   {
     servo1.write(pos);
@@ -110,7 +113,7 @@ void loop()
 
   delay(500);
 
-  // sweep 120 → 0
+  // sweep 180 → 0
   for (int pos = 100; pos >= 0; pos--)
   {
     servo1.write(pos);

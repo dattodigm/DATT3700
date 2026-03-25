@@ -205,8 +205,8 @@
   };
   let faceAngleLimits = { pan_min: 20, pan_max: 160, tilt_min: 20, tilt_max: 160 };
   let lastFacePairSendAt = 0;
-  let suePadState = { motionActive: false, ledActive: false };
-  let lastSueSendAt = { motion: 0, led: 0 };
+  let suePadState = { motionActive: false, eyeActive: false };
+  let lastSueSendAt = { motion: 0, eye: 0 };
   let reactorConfigTimer = null;
   let reactorConfigLoaded = false;
   let showcaseMode = 'balanced';
@@ -215,8 +215,11 @@
   const SYLVIE_SEND_INTERVAL_MS = 40;
   const FACE_PAIR_SEND_INTERVAL_MS = 55;
   const SUE_SEND_INTERVAL_MS = 50;
-  const SUE_ANGLE_MIN = 60;
-  const SUE_ANGLE_MAX = 120;
+  const SUE_EYE_SEND_INTERVAL_MS = 65;
+  const SUE_OPEN_MIN = 0;
+  const SUE_OPEN_MAX = 100;
+  const SUE_SPEED_MIN = 2;
+  const SUE_SPEED_MAX = 120;
 
   async function getJSON(url) {
     const r = await fetch(url);
@@ -804,21 +807,27 @@
     if (nodeType === 'sue') {
       holder.innerHTML = `
         <div class="flex gap-2 flex-wrap">
-          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['relax'])">Relax</button>
-          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['danger'])">Danger</button>
-          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['idle'])">Idle</button>
-          <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/state',['alert'])">Alert</button>
-          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="sendRaw('/state',['calm'])">Calm</button>
-          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/state',['breathe'])">Breathe</button>
+          <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendRaw('/state',['bloom'])">Bloom</button>
+          <button class="bg-red-600 hover:bg-red-500 rounded px-3 py-1" onclick="sendRaw('/state',['alert'])">Alert</button>
+          <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="sendRaw('/state',['soothe'])">Soothe</button>
+          <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/state',['rest'])">Rest</button>
+          <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="sendRaw('/state',['breathe'])">Petal Breathe</button>
           <button class="bg-red-700 hover:bg-red-600 rounded px-3 py-1" onclick="sendRaw('/stop',[])">STOP</button>
         </div>
 
-        <div>Angle <input id="sueAngle" type="range" min="${SUE_ANGLE_MIN}" max="${SUE_ANGLE_MAX}" value="90" class="w-full" oninput="sendSueAngleSpeedFromSliders()"></div>
-        <div>Speed <input id="sueSpeed" type="range" min="1" max="200" value="20" class="w-full" oninput="sendSueAngleSpeedFromSliders()"></div>
-        <div id="sueAngleSpeedText" class="text-xs text-slate-400">Angle: 90 | Speed: 20 ms/deg</div>
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Petal Open % and Motion Speed</div>
+          <div>Open
+            <input id="sueOpen" type="range" min="${SUE_OPEN_MIN}" max="${SUE_OPEN_MAX}" value="20" class="w-full" oninput="sendSueOpenSpeedFromSliders()">
+          </div>
+          <div>Speed
+            <input id="sueSpeed" type="range" min="${SUE_SPEED_MIN}" max="${SUE_SPEED_MAX}" value="20" class="w-full" oninput="sendSueOpenSpeedFromSliders()">
+          </div>
+          <div id="sueOpenSpeedText" class="text-xs text-slate-400">Open: 20% | Speed: 20 ms/deg</div>
+        </div>
 
         <div class="bg-slate-900 rounded p-2">
-          <div class="mb-1 text-xs text-slate-400">Motion Pad (X: angle ${SUE_ANGLE_MIN}..${SUE_ANGLE_MAX}, Y: speed 1..200)</div>
+          <div class="mb-1 text-xs text-slate-400">Petal Pad (X: open ${SUE_OPEN_MIN}..${SUE_OPEN_MAX}%, Y: speed ${SUE_SPEED_MIN}..${SUE_SPEED_MAX})</div>
           <div class="flex items-center gap-4">
             <div id="sueMotionPad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
               <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.35);"></div>
@@ -829,21 +838,32 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2">
-          <label>Red <input id="sueR" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLEDFromSliders()"></label>
-          <label>Green <input id="sueG" type="range" min="0" max="255" value="0" class="w-full" oninput="sendSueLEDFromSliders()"></label>
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-1 text-xs text-slate-400">Eye Controls</div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <button class="bg-sky-600 hover:bg-sky-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[1])">Track ON</button>
+            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/auto',[0])">Track OFF</button>
+            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
+            <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/eye/blink',[1])">Auto Blink ON</button>
+            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/eye/blink',[0])">Auto Blink OFF</button>
+            <button class="bg-violet-600 hover:bg-violet-500 rounded px-3 py-1" onclick="sendRaw('/eye/breathe',[1])">Eye Breathe ON</button>
+            <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/eye/breathe',[0])">Eye Breathe OFF</button>
+          </div>
+          <div class="mt-2">Eye Open
+            <input id="sueEyeOpen" type="range" min="0" max="100" value="100" class="w-full" oninput="sendSueEyeOpenFromSlider()">
+          </div>
+          <div id="sueEyeOpenText" class="text-xs text-slate-400">Eye Open: 100%</div>
         </div>
-        <div id="sueLedText" class="text-xs text-slate-400">R: 0 | G: 0</div>
 
         <div class="bg-slate-900 rounded p-2">
-          <div class="mb-1 text-xs text-slate-400">LED Pad (X: red 0..255, Y: green 0..255)</div>
+          <div class="mb-1 text-xs text-slate-400">Eye Gaze Pad (X/Y -> /eye/look)</div>
           <div class="flex items-center gap-4">
-            <div id="sueLedPad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
+            <div id="sueEyePad" class="bg-slate-700 rounded-lg border border-slate-600" style="position:relative; width:220px; height:220px; touch-action:none;">
               <div style="position:absolute; left:0; right:0; top:50%; height:1px; transform:translateY(-0.5px); background:rgba(148,163,184,0.35);"></div>
               <div style="position:absolute; top:0; bottom:0; left:50%; width:1px; transform:translateX(-0.5px); background:rgba(148,163,184,0.35);"></div>
-              <div id="sueLedDot" class="bg-amber-500 border border-amber-300 rounded-full" style="position:absolute; width:14px; height:14px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
+              <div id="sueEyeDot" class="bg-cyan-500 border border-cyan-300 rounded-full" style="position:absolute; width:14px; height:14px; left:50%; top:50%; transform:translate(-50%,-50%);"></div>
             </div>
-            <div id="sueLedPadText" class="text-xs text-slate-400 font-mono leading-6">X=0.00 Y=0.00</div>
+            <div id="sueEyePadText" class="text-xs text-slate-400 font-mono leading-6">X=0.00 Y=0.00</div>
           </div>
         </div>
       `;
@@ -962,23 +982,14 @@
     await sendRaw(`/led${id}`, [r, g, b]);
   }
 
-  async function sendSueLED(r = null, g = null, force = false) {
-    const rr = clamp(r === null ? parseInt(document.getElementById('sueR').value, 10) : parseInt(r, 10), 0, 255);
-    const gg = clamp(g === null ? parseInt(document.getElementById('sueG').value, 10) : parseInt(g, 10), 0, 255);
-    const now = Date.now();
-    if (!force && now - lastSueSendAt.led < SUE_SEND_INTERVAL_MS) return;
-    lastSueSendAt.led = now;
-    await sendRaw('/led', [rr, gg]);
+  function updateSueOpenSpeedText(openPct, speed) {
+    const txt = document.getElementById('sueOpenSpeedText');
+    if (txt) txt.textContent = `Open: ${openPct}% | Speed: ${speed} ms/deg`;
   }
 
-  function updateSueAngleSpeedText(angle, speed) {
-    const txt = document.getElementById('sueAngleSpeedText');
-    if (txt) txt.textContent = `Angle: ${angle} | Speed: ${speed} ms/deg`;
-  }
-
-  function updateSueLedText(r, g) {
-    const txt = document.getElementById('sueLedText');
-    if (txt) txt.textContent = `R: ${r} | G: ${g}`;
+  function updateSueEyeOpenText(openPct) {
+    const txt = document.getElementById('sueEyeOpenText');
+    if (txt) txt.textContent = `Eye Open: ${openPct}%`;
   }
 
   function setPadDot(dotId, x, y) {
@@ -999,83 +1010,81 @@
     return Math.round(lo + t * (hi - lo));
   }
 
-  function syncSueMotionPadDot(angle, speed) {
-    const nx = valueToNorm(angle, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
-    const ny = valueToNorm(speed, 200, 1); // up = faster (smaller ms/deg)
+  function syncSueMotionPadDot(openPct, speed) {
+    const nx = valueToNorm(openPct, SUE_OPEN_MIN, SUE_OPEN_MAX);
+    const ny = valueToNorm(speed, SUE_SPEED_MAX, SUE_SPEED_MIN); // up = faster (smaller ms/deg)
     setPadDot('sueMotionDot', nx, ny);
     const txt = document.getElementById('sueMotionText');
     if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)}`;
   }
 
-  function syncSueLedPadDot(r, g) {
-    const nx = valueToNorm(r, 0, 255);
-    const ny = valueToNorm(g, 0, 255);
-    setPadDot('sueLedDot', nx, ny);
-    const txt = document.getElementById('sueLedPadText');
+  function syncSueEyePadDot(gx, gy) {
+    const nx = clamp(gx, -1, 1);
+    const ny = clamp(gy, -1, 1);
+    setPadDot('sueEyeDot', nx, ny);
+    const txt = document.getElementById('sueEyePadText');
     if (txt) txt.textContent = `X=${nx.toFixed(2)} Y=${ny.toFixed(2)}`;
   }
 
-  async function sendSueAngleSpeed(angle, speed, force = false) {
-    const a = clamp(parseInt(angle, 10) || 90, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
-    const s = clamp(parseInt(speed, 10) || 20, 1, 200);
+  async function sendSueOpenSpeed(openPct, speed, force = false) {
+    const o = clamp(parseInt(openPct, 10) || 20, SUE_OPEN_MIN, SUE_OPEN_MAX);
+    const s = clamp(parseInt(speed, 10) || 20, SUE_SPEED_MIN, SUE_SPEED_MAX);
     const now = Date.now();
     if (!force && now - lastSueSendAt.motion < SUE_SEND_INTERVAL_MS) return;
     lastSueSendAt.motion = now;
     await Promise.all([
-      sendRaw('/angle', [a]),
+      sendRaw('/open', [o]),
       sendRaw('/speed', [s]),
     ]);
   }
 
-  async function sendSueAngleSpeedFromSliders(force = false) {
-    const angleEl = document.getElementById('sueAngle');
+  async function sendSueOpenSpeedFromSliders(force = false) {
+    const openEl = document.getElementById('sueOpen');
     const speedEl = document.getElementById('sueSpeed');
-    if (!angleEl || !speedEl) return;
-    const angle = clamp(parseInt(angleEl.value, 10) || 90, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
-    const speed = clamp(parseInt(speedEl.value, 10) || 20, 1, 200);
-    updateSueAngleSpeedText(angle, speed);
-    syncSueMotionPadDot(angle, speed);
-    await sendSueAngleSpeed(angle, speed, force);
+    if (!openEl || !speedEl) return;
+    const openPct = clamp(parseInt(openEl.value, 10) || 20, SUE_OPEN_MIN, SUE_OPEN_MAX);
+    const speed = clamp(parseInt(speedEl.value, 10) || 20, SUE_SPEED_MIN, SUE_SPEED_MAX);
+    updateSueOpenSpeedText(openPct, speed);
+    syncSueMotionPadDot(openPct, speed);
+    await sendSueOpenSpeed(openPct, speed, force);
   }
 
-  async function sendSueLEDFromSliders(force = false) {
-    const rEl = document.getElementById('sueR');
-    const gEl = document.getElementById('sueG');
-    if (!rEl || !gEl) return;
-    const r = clamp(parseInt(rEl.value, 10) || 0, 0, 255);
-    const g = clamp(parseInt(gEl.value, 10) || 0, 0, 255);
-    updateSueLedText(r, g);
-    syncSueLedPadDot(r, g);
-    await sendSueLED(r, g, force);
+  async function sendSueEyeOpenFromSlider(force = false) {
+    const eyeOpenEl = document.getElementById('sueEyeOpen');
+    if (!eyeOpenEl) return;
+    const eyeOpen = clamp(parseInt(eyeOpenEl.value, 10) || 100, 0, 100);
+    updateSueEyeOpenText(eyeOpen);
+    const now = Date.now();
+    if (!force && now - lastSueSendAt.eye < SUE_EYE_SEND_INTERVAL_MS) return;
+    lastSueSendAt.eye = now;
+    await sendRaw('/eye/open', [eyeOpen]);
   }
 
   async function sendSueFromMotionPad(nx, ny, force = false) {
-    const angle = normToValue(nx, SUE_ANGLE_MIN, SUE_ANGLE_MAX);
-    const speed = normToValue(ny, 200, 1);
-    const angleEl = document.getElementById('sueAngle');
+    const openPct = normToValue(nx, SUE_OPEN_MIN, SUE_OPEN_MAX);
+    const speed = normToValue(ny, SUE_SPEED_MAX, SUE_SPEED_MIN);
+    const openEl = document.getElementById('sueOpen');
     const speedEl = document.getElementById('sueSpeed');
-    if (angleEl) angleEl.value = `${angle}`;
+    if (openEl) openEl.value = `${openPct}`;
     if (speedEl) speedEl.value = `${speed}`;
-    updateSueAngleSpeedText(angle, speed);
-    syncSueMotionPadDot(angle, speed);
-    await sendSueAngleSpeed(angle, speed, force);
+    updateSueOpenSpeedText(openPct, speed);
+    syncSueMotionPadDot(openPct, speed);
+    await sendSueOpenSpeed(openPct, speed, force);
   }
 
-  async function sendSueFromLedPad(nx, ny, force = false) {
-    const r = normToValue(nx, 0, 255);
-    const g = normToValue(ny, 0, 255);
-    const rEl = document.getElementById('sueR');
-    const gEl = document.getElementById('sueG');
-    if (rEl) rEl.value = `${r}`;
-    if (gEl) gEl.value = `${g}`;
-    updateSueLedText(r, g);
-    syncSueLedPadDot(r, g);
-    await sendSueLED(r, g, force);
+  async function sendSueFromEyePad(nx, ny, force = false) {
+    syncSueEyePadDot(nx, ny);
+    const now = Date.now();
+    if (!force && now - lastSueSendAt.eye < SUE_EYE_SEND_INTERVAL_MS) return;
+    lastSueSendAt.eye = now;
+    const x = Math.round(clamp(nx, -1, 1) * 100);
+    const y = Math.round(clamp(ny, -1, 1) * 100);
+    await sendRaw('/eye/look', [x, y]);
   }
 
   function initSuePads() {
     const motionPad = document.getElementById('sueMotionPad');
-    const ledPad = document.getElementById('sueLedPad');
+    const eyePad = document.getElementById('sueEyePad');
 
     const pointerNorm = (pad, x, y) => {
       const rect = pad.getBoundingClientRect();
@@ -1099,35 +1108,36 @@
       const motionRelease = async () => {
         if (!suePadState.motionActive) return;
         suePadState.motionActive = false;
-        await sendSueAngleSpeedFromSliders(true);
+        await sendSueOpenSpeedFromSliders(true);
       };
       motionPad.onpointerup = motionRelease;
       motionPad.onpointercancel = motionRelease;
     }
 
-    if (ledPad) {
-      ledPad.onpointerdown = async (ev) => {
-        suePadState.ledActive = true;
-        ledPad.setPointerCapture(ev.pointerId);
-        const { nx, ny } = pointerNorm(ledPad, ev.clientX, ev.clientY);
-        await sendSueFromLedPad(nx, ny, true);
+    if (eyePad) {
+      eyePad.onpointerdown = async (ev) => {
+        suePadState.eyeActive = true;
+        eyePad.setPointerCapture(ev.pointerId);
+        const { nx, ny } = pointerNorm(eyePad, ev.clientX, ev.clientY);
+        await sendSueFromEyePad(nx, ny, true);
       };
-      ledPad.onpointermove = async (ev) => {
-        if (!suePadState.ledActive) return;
-        const { nx, ny } = pointerNorm(ledPad, ev.clientX, ev.clientY);
-        await sendSueFromLedPad(nx, ny, false);
+      eyePad.onpointermove = async (ev) => {
+        if (!suePadState.eyeActive) return;
+        const { nx, ny } = pointerNorm(eyePad, ev.clientX, ev.clientY);
+        await sendSueFromEyePad(nx, ny, false);
       };
-      const ledRelease = async () => {
-        if (!suePadState.ledActive) return;
-        suePadState.ledActive = false;
-        await sendSueLEDFromSliders(true);
+      const eyeRelease = async () => {
+        if (!suePadState.eyeActive) return;
+        suePadState.eyeActive = false;
+        await sendSueFromEyePad(0, 0, true);
       };
-      ledPad.onpointerup = ledRelease;
-      ledPad.onpointercancel = ledRelease;
+      eyePad.onpointerup = eyeRelease;
+      eyePad.onpointercancel = eyeRelease;
     }
 
-    sendSueAngleSpeedFromSliders(true);
-    sendSueLEDFromSliders(true);
+    sendSueOpenSpeedFromSliders(true);
+    sendSueEyeOpenFromSlider(true);
+    syncSueEyePadDot(0, 0);
   }
 
   async function scan(mode) {
