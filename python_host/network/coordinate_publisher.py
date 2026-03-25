@@ -7,19 +7,22 @@ import time
 
 
 class CoordinatePublisher:
-    """Continuously publishes primary face coordinates using selected transport."""
+    """Continuously publishes tracking coordinates using selected transport."""
 
     def __init__(
         self,
         get_primary_target,
         get_selected_target,
+        get_selected_node_type,
         osc_sender,
         serial_sender=None,
         frame_width=1920,
         frame_height=1080,
+        invert_x=False,
     ):
         self._get_primary_target = get_primary_target
         self._get_selected_target = get_selected_target
+        self._get_selected_node_type = get_selected_node_type
         self._osc = osc_sender
         self._serial = serial_sender
 
@@ -30,6 +33,7 @@ class CoordinatePublisher:
         self._transport = "osc"
         self._rate_hz = 20.0
         self._deadband = 0.01
+        self._invert_x = bool(invert_x)
 
         self._last_norm = None
         self._last_sent_ts = 0.0
@@ -49,6 +53,7 @@ class CoordinatePublisher:
         deadband=None,
         frame_width=None,
         frame_height=None,
+        invert_x=None,
     ):
         with self._lock:
             if enabled is not None:
@@ -65,6 +70,8 @@ class CoordinatePublisher:
                 self._frame_width = max(1, int(frame_width))
             if frame_height is not None:
                 self._frame_height = max(1, int(frame_height))
+            if invert_x is not None:
+                self._invert_x = bool(invert_x)
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -75,6 +82,7 @@ class CoordinatePublisher:
                 "deadband": self._deadband,
                 "frame_width": self._frame_width,
                 "frame_height": self._frame_height,
+                "invert_x": self._invert_x,
                 "last_sent_ts": self._last_sent_ts,
                 "last_result": self._last_result,
             }
@@ -98,6 +106,7 @@ class CoordinatePublisher:
                 time.sleep(min(period, 0.2))
                 continue
 
+            # Target tuple may carry extra metadata (e.g. weighted total area).
             target = self._get_primary_target()
             if not target or len(target) < 2:
                 with self._lock:
@@ -107,6 +116,8 @@ class CoordinatePublisher:
 
             nx = max(0.0, min(1.0, float(target[0])))
             ny = max(0.0, min(1.0, float(target[1])))
+            if cfg.get("invert_x"):
+                nx = 1.0 - nx
             if not self._should_send(nx, ny, cfg["deadband"]):
                 time.sleep(period)
                 continue
@@ -116,13 +127,17 @@ class CoordinatePublisher:
             if cfg["transport"] == "osc":
                 target_name = self._get_selected_target()
                 if target_name:
-                    sent = self._osc.send_raw(
-                        target_name,
-                        "/track/norm",
-                        [round(nx, 4), round(ny, 4)],
-                        source="auto",
-                    )
-                    result = "osc_ok" if sent else "osc_failed"
+                    node_type = str(self._get_selected_node_type() or "unknown").lower().strip()
+                    if node_type in ("sue", "face_track"):
+                        sent = self._osc.send_raw(
+                            target_name,
+                            "/track/norm",
+                            [round(nx, 4), round(ny, 4)],
+                            source="auto",
+                        )
+                        result = "osc_ok" if sent else "osc_failed"
+                    else:
+                        result = f"unsupported_node:{node_type}"
                 else:
                     result = "no_target"
             else:

@@ -22,7 +22,7 @@
     },
     "sue": {
       "label": "Sue",
-      "description": "1x Servo, 2x mono LED channels"
+      "description": "1x servo petal + TFT eye (blink/breathe/track)"
     },
     "face_track": {
       "label": "Face Tracking",

@@ -1,15 +1,12 @@
 """
 face_tracker.py — Weighted multi-face tracking with multi-camera support.
 
-Selects the primary target using:
-    weight = bbox_area × (1 / (1 + center_distance))
-
-Outputs only the primary target's normalized coordinates (0.0-1.0).
+Primary target: largest face by pixel area.
+Tracking target: area-weighted centroid of all detected faces.
 No heavy ML dependencies — uses only OpenCV Haar Cascade.
 """
 
 import cv2
-import math
 import threading
 import time
 import sys
@@ -30,7 +27,8 @@ class FaceTracker:
 
         self._lock = threading.Lock()
         self._latest_frame = None
-        self._primary_target = None  # (norm_x, norm_y, weight)
+        self._primary_target = None   # (norm_x, norm_y, area)
+        self._weighted_target = None  # (norm_x, norm_y, total_area, face_count)
         self._all_faces = []
         self._running = False
 
@@ -68,6 +66,18 @@ class FaceTracker:
         with self._lock:
             return self._primary_target
 
+    def get_weighted_target(self):
+        """Return (norm_x, norm_y, total_area, face_count) for multi-face tracking."""
+        with self._lock:
+            return self._weighted_target
+
+    def get_tracking_target(self):
+        """Preferred target for control pipeline."""
+        with self._lock:
+            if self._weighted_target is not None:
+                return self._weighted_target
+            return self._primary_target
+
     def get_all_faces(self):
         """Return list of face dicts for overlay rendering."""
         with self._lock:
@@ -96,8 +106,6 @@ class FaceTracker:
 
     def _process_frame(self, frame):
         h, w = frame.shape[:2]
-        cx_frame, cy_frame = w / 2.0, h / 2.0
-        max_dist = math.hypot(cx_frame, cy_frame)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         rects = self._cascade.detectMultiScale(
@@ -105,16 +113,16 @@ class FaceTracker:
         )
 
         faces = []
-        best_weight = -1.0
+        best_area = -1.0
         best_target = None
+        weighted_sum_x = 0.0
+        weighted_sum_y = 0.0
+        total_area = 0.0
 
         for x, y, fw, fh in rects:
             area = fw * fh
             cx_face = x + fw / 2.0
             cy_face = y + fh / 2.0
-            dist = math.hypot(cx_face - cx_frame, cy_face - cy_frame)
-            proximity = 1.0 / (1.0 + dist / max_dist)
-            weight = area * proximity
 
             norm_x = cx_face / w
             norm_y = cy_face / h
@@ -123,20 +131,23 @@ class FaceTracker:
                 "x": int(x), "y": int(y), "w": int(fw), "h": int(fh),
                 "norm_x": round(norm_x, 4),
                 "norm_y": round(norm_y, 4),
-                "weight": round(weight, 2),
+                "area": int(area),
             }
             faces.append(face_info)
+            weighted_sum_x += norm_x * area
+            weighted_sum_y += norm_y * area
+            total_area += area
 
-            if weight > best_weight:
-                best_weight = weight
-                best_target = (round(norm_x, 4), round(norm_y, 4), round(weight, 2))
+            if area > best_area:
+                best_area = area
+                best_target = (round(norm_x, 4), round(norm_y, 4), int(area))
 
             # Draw bounding box on frame for preview
             cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 0), 2)
 
         # Highlight primary target
         if best_target and faces:
-            primary = max(faces, key=lambda f: f["weight"])
+            primary = max(faces, key=lambda f: f["area"])
             cv2.rectangle(
                 frame,
                 (primary["x"], primary["y"]),
@@ -144,10 +155,24 @@ class FaceTracker:
                 (0, 0, 255), 3,
             )
 
+        weighted_target = None
+        if total_area > 0:
+            wx = weighted_sum_x / total_area
+            wy = weighted_sum_y / total_area
+            weighted_target = (
+                round(wx, 4),
+                round(wy, 4),
+                round(total_area, 1),
+                len(faces),
+            )
+            # Blue dot = area-weighted centroid used for tracking output.
+            cv2.circle(frame, (int(wx * w), int(wy * h)), 7, (255, 140, 0), -1)
+
         with self._lock:
             self._latest_frame = frame
             self._all_faces = faces
             self._primary_target = best_target
+            self._weighted_target = weighted_target
 
     @staticmethod
     def list_cameras(max_check=2):

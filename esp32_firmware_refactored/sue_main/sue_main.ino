@@ -1,573 +1,804 @@
-/**
- * sue_main.ino - Sue Single-Flower Node with FSM Servo Control
- *                Sue 单花节点 - 有限状态机舵机控制
- *
- * Hardware / 硬件:
- *   - 1× Servo motor (GPIO 18) — petal open/close via L298N or direct
- *   - 1× Red LED (GPIO 22)     — danger indicator
- *   - 1× Green LED (GPIO 23)   — relax indicator
- *
- * FSM States / 有限状态机:
- *   IDLE    → Flower closed, waiting for command / 花朵闭合，等待指令
- *   OPENING → Servo smoothly moving 60° → 120° / 舵机平滑打开
- *   OPENED  → Flower open, holding position / 花朵开放，保持位置
- *   CLOSING → Servo smoothly moving 120° → 60° / 舵机平滑闭合
- *
- * Network / 网络:
- *   WiFi STA/AP + mDNS + UDP/OSC (NO ESPAsyncWebServer)
- *   Default: STA mode (connects to router / 默认客户端模式)
- *
- * OSC Commands / OSC 指令:
- *   /state [danger|relax|idle|alert|calm]  - Set flower state / 设置花朵状态
- *   /angle [value]      - Direct servo angle (0-180) / 直接设置舵机角度
- *   /speed [value]      - Set servo step speed (ms/degree) / 设置舵机速度
- *   /led [r] [g]        - Direct LED control / 直接控制 LED
- *   /stop               - Emergency stop / 紧急停止
- *
- * Constraints / 约束:
- *   ⚠️ NO delay() in loop() — millis() only
- *   ⚠️ No String concatenation in loops
- *   ⚠️ No malloc/new at runtime
- *
- * Note on PID / 关于 PID:
- *   Standard hobby servos have an internal PID controller — they move
- *   to a commanded angle using their own feedback loop. External PID
- *   would require a potentiometer or encoder for position feedback,
- *   which this wiring does not include. The smooth stepping here
- *   provides gentle motion profiles without needing external PID.
- *   标准舵机内部已有 PID 控制器。外部 PID 需要电位器或编码器反馈，
- *   当前接线不包含。此处的平滑步进已能提供柔和运动曲线。
- */
-
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <ESPmDNS.h>
 #include <ESP32Servo.h>
 #include <OSCMessage.h>
+#include <Arduino_GFX_Library.h>
+#include <math.h>
 
 // ============================================================
-// Network Configuration / 网络配置
+// Node / network config
 // ============================================================
-#define USE_AP_MODE false  // false = STA (client), true = AP (hotspot)
+const char* STA_SSID = "F7OWER";
+const char* STA_PASSWORD = "12345678";
 
-// AP mode settings / 热点模式设置
-const char* ap_ssid     = "ESP32_Sue";
-const char* ap_password = "12345678";
-
-// STA mode settings / 客户端模式设置
-// ⚠️ Change these to your actual WiFi credentials before flashing!
-// ⚠️ 烧录前请修改为你实际的 WiFi 账号密码！
-const char* sta_ssid     = "F7OWER";
-const char* sta_password = "12345678";
-
-// Node identification / 节点识别
-const char* NODE_ID   = "sue_1";
+const char* NODE_ID = "sue_1";
 const char* NODE_TYPE = "sue";
-const int   OSC_PORT  = 8888;
+const int OSC_PORT = 8888;
 
-// mDNS service / mDNS 服务
-const char* MDNS_SERVICE = "_datt_flower";
-const char* MDNS_PROTO   = "_tcp";
-
-// STA reconnection / STA 重连
-const int   STA_MAX_RETRIES     = 20;
-const int   STA_RETRY_INTERVAL  = 500;  // ms
-bool        staConnecting       = false;
-int         staRetryCount       = 0;
-unsigned long lastSTACheckMs    = 0;
-bool        networkConnected    = false;
+const int WIFI_BOOT_CONNECT_ATTEMPTS = 24;
+const int WIFI_AUTO_RETRY_ATTEMPTS = 10;
+const int WIFI_MANUAL_RETRY_DEFAULT = 6;
+const int WIFI_RETRY_DELAY_MS = 500;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 6000;
 
 // ============================================================
-// Hardware Pins / 硬件引脚
+// Display pins (GC9A01 round TFT)
 // ============================================================
-const int SERVO_PIN = 18;
-const int RED_LED   = 22;
-const int GREEN_LED = 23;
+#define TFT_MOSI 23
+#define TFT_SCLK 18
+#define TFT_CS   19
+#define TFT_DC   21
+#define TFT_RST  22
+
+Arduino_DataBus* bus = new Arduino_ESP32SPI(TFT_DC, TFT_CS, TFT_SCLK, TFT_MOSI, -1);
+Arduino_GFX* panel = new Arduino_GC9A01(bus, TFT_RST, 0);
+
+const int PATCH_X = 52;
+const int PATCH_Y = 48;
+const int PATCH_W = 136;
+const int PATCH_H = 144;
+const int EYE_CX = 120;
+const int EYE_CY = 120;
+const int LCX = EYE_CX - PATCH_X;
+const int LCY = EYE_CY - PATCH_Y;
+
+Arduino_GFX* eyeCanvasA = new Arduino_Canvas(PATCH_W, PATCH_H, panel, PATCH_X, PATCH_Y);
+Arduino_GFX* eyeCanvasB = new Arduino_Canvas(PATCH_W, PATCH_H, panel, PATCH_X, PATCH_Y);
+Arduino_GFX* frontCanvas = eyeCanvasA;
+Arduino_GFX* backCanvas = eyeCanvasB;
 
 // ============================================================
-// Servo Configuration / 舵机配置
-// ============================================================
-const int CLOSED_ANGLE = 60;   // Flower closed position / 花朵闭合角度
-const int OPEN_ANGLE   = 120;  // Flower open position / 花朵开放角度
-
-// ============================================================
-// FSM States / 有限状态机状态
-// ============================================================
-enum FlowerState {
-  STATE_IDLE,     // Closed, waiting / 闭合，等待
-  STATE_OPENING,  // Smoothly opening / 平滑打开中
-  STATE_OPENED,   // Open, holding / 开放，保持
-  STATE_CLOSING   // Smoothly closing / 平滑闭合中
-};
-
-// ============================================================
-// Global State / 全局状态
+// Servo config (physical-safe travel)
 // ============================================================
 Servo petalServo;
+const int SERVO_PIN = 4;
+const int SERVO_MIN_US = 500;
+const int SERVO_MAX_US = 2400;
+const int SERVO_SAFE_MIN_ANGLE = 66;
+const int SERVO_SAFE_MAX_ANGLE = 118;
+const int PETAL_CLOSED_ANGLE = 72;
+const int PETAL_OPEN_ANGLE = 110;
+const int PETAL_ALERT_ANGLE = 88;
+
+enum PetalMode {
+  PETAL_IDLE = 0,
+  PETAL_MOVING = 1,
+  PETAL_BREATHING = 2
+};
+
+PetalMode petalMode = PETAL_IDLE;
+int currentPetalAngle = PETAL_CLOSED_ANGLE;
+int targetPetalAngle = PETAL_CLOSED_ANGLE;
+int petalStepIntervalMs = 16;
+unsigned long lastPetalStepMs = 0;
+int breathMinPct = 35;
+int breathMaxPct = 75;
+int breathPeriodMs = 3800;
+unsigned long breathStartMs = 0;
+
+// ============================================================
+// Eye runtime state
+// ============================================================
+struct EyeState {
+  float gazeX;
+  float gazeY;
+  float targetX;
+  float targetY;
+  float gazeLimitX;
+  float gazeLimitY;
+  float manualOpen;
+  float pupilSpinPhase;
+  bool manualOpenOverride;
+  bool trackEnabled;
+  bool autoBlink;
+  bool autoBreathe;
+  bool pupilAutoSpin;
+  bool blinkRunning;
+  unsigned long blinkStartMs;
+  unsigned long blinkDurationMs;
+  unsigned long nextBlinkMs;
+  unsigned long lastTrackInputMs;
+};
+
+EyeState eye = {
+  0.0f, 0.0f,
+  0.0f, 0.0f,
+  1.0f, 1.0f,
+  1.0f,
+  0.0f,
+  false,
+  true, true, true, true,
+  false, 0, 180, 0, 0
+};
+
+const unsigned long EYE_FRAME_INTERVAL_MS = 33;
+const unsigned long TRACK_HOLD_TIMEOUT_MS = 1400;
+unsigned long lastEyeFrameMs = 0;
+
+// ============================================================
+// Network runtime
+// ============================================================
 WiFiUDP udp;
-
-FlowerState currentState = STATE_IDLE;
-int   currentAngle       = CLOSED_ANGLE;
-int   targetAngle        = CLOSED_ANGLE;
-int   stepIntervalMs     = 20;   // ms per degree step / 每度步进间隔
-unsigned long lastStepMs = 0;    // Last servo step timestamp / 上次步进时间
-unsigned long stateEntryMs = 0;  // When current state was entered / 进入当前状态的时间
-
-// Auto-close timer for OPENED state (0 = disabled) / 自动闭合定时器（0=禁用）
-unsigned long autoCloseMs = 0;
+unsigned long lastWifiRetryMs = 0;
+int wifiManualRetryAttempts = WIFI_MANUAL_RETRY_DEFAULT;
+bool mdnsStarted = false;
 
 // ============================================================
-// setup() / 初始化
+// Colors
 // ============================================================
-void setup() {
-  Serial.begin(115200);
+const uint16_t COLOR_BLACK = 0x0000;
+const uint16_t COLOR_WHITE = 0xFFFF;
+const uint16_t COLOR_SCLERA = 0xEF7D;
+const uint16_t COLOR_IRIS_DARK = 0x0015;
+const uint16_t COLOR_IRIS_MID = 0x027F;
+const uint16_t COLOR_IRIS_LIGHT = 0x3DFF;
+const uint16_t COLOR_SHADOW = 0x4208;
+const uint16_t COLOR_LID = 0x20C4;
 
-  Serial.println("\n========================================");
-  Serial.println("  DATT3700 Flower Node - Sue");
-  Serial.println("  Single-Flower Servo Controller");
-  Serial.println("  单花舵机控制节点");
-  Serial.println("========================================\n");
+// ============================================================
+// Forward declarations
+// ============================================================
+bool connectWifiWithAttempts(int attempts, bool verbose);
+void setupNetwork();
+void ensureWifiConnected();
+void setupMDNS();
+void ensureMDNS();
+void printWifiStatus();
+void manualWifiRetry(int attempts);
 
-  // --- Initialize hardware / 初始化硬件 ---
-  // Configure LED pins with LEDC PWM for brightness control / 用 LEDC PWM 配置 LED 引脚
-  ledcAttach(RED_LED, 1000, 8);
-  ledcAttach(GREEN_LED, 1000, 8);
-  ledcWrite(RED_LED, 0);
-  ledcWrite(GREEN_LED, 0);
+void processOSC();
+void parseSerialLine();
+void printHelp();
+void printSelfInfo();
 
-  petalServo.setPeriodHertz(50);
-  petalServo.attach(SERVO_PIN, 500, 2400);
-  petalServo.write(CLOSED_ANGLE);
-  currentAngle = CLOSED_ANGLE;
-  targetAngle  = CLOSED_ANGLE;
+void setPetalOpenPercent(int pct, bool smooth = true);
+void setPetalAngleSafe(int angle, bool smooth = true);
+void startPetalBreathe(int minPct, int maxPct, int periodMs);
+void stopPetalBreathe();
+void updatePetal();
+void applyState(const char* state);
+void emergencyStop();
 
-  Serial.printf("[Sue] Servo on GPIO %d, range %d-%d degrees\n",
-                SERVO_PIN, CLOSED_ANGLE, OPEN_ANGLE);
-  Serial.printf("[Sue] Red LED: GPIO %d, Green LED: GPIO %d\n",
-                RED_LED, GREEN_LED);
+void setTrackNorm(float nx, float ny);
+void setTrackPixel(int x, int y, int frameW, int frameH);
+void setManualEyeOpenPercent(int pct);
+void setManualEyeLook(float x, float y);
+void updateEye(bool force = false);
+void drawEyeFrame(
+  Arduino_GFX* c,
+  float gazeX,
+  float gazeY,
+  float openFactor,
+  float breatheScale,
+  float breatheDrift,
+  float pupilSpinPhase,
+  bool pupilAutoSpin
+);
+void drawStaticBackground();
+unsigned long chooseNextBlinkDelayMs();
 
-  // --- Initialize network / 初始化网络 ---
-  setupNetwork();
+// OSC routes
+void routeState(OSCMessage& msg, int addrOffset);
+void routeAngle(OSCMessage& msg, int addrOffset);
+void routeOpen(OSCMessage& msg, int addrOffset);
+void routeSpeed(OSCMessage& msg, int addrOffset);
+void routeStop(OSCMessage& msg, int addrOffset);
+void routeTrackAuto(OSCMessage& msg, int addrOffset);
+void routeTrackNorm(OSCMessage& msg, int addrOffset);
+void routeTrackXY(OSCMessage& msg, int addrOffset);
+void routeTrackCenter(OSCMessage& msg, int addrOffset);
+void routeEyeLook(OSCMessage& msg, int addrOffset);
+void routeEyeOpen(OSCMessage& msg, int addrOffset);
+void routeEyeBlink(OSCMessage& msg, int addrOffset);
+void routeEyeBreathe(OSCMessage& msg, int addrOffset);
+void routeEyeLimits(OSCMessage& msg, int addrOffset);
+void routeEyePupilAuto(OSCMessage& msg, int addrOffset);
+void routeInfoSelf(OSCMessage& msg, int addrOffset);
+void routeInfoServo(OSCMessage& msg, int addrOffset);
 
-  // --- Start UDP for OSC / 启动 OSC UDP ---
-  udp.begin(OSC_PORT);
-  Serial.printf("[Sue] OSC listening on port %d\n", OSC_PORT);
+float clampf(float v, float lo, float hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
 
-  // --- Print command help / 打印命令帮助 ---
-  printHelp();
+int mapOpenPctToAngle(int pct) {
+  pct = constrain(pct, 0, 100);
+  int angle = PETAL_CLOSED_ANGLE + ((PETAL_OPEN_ANGLE - PETAL_CLOSED_ANGLE) * pct) / 100;
+  return constrain(angle, SERVO_SAFE_MIN_ANGLE, SERVO_SAFE_MAX_ANGLE);
+}
 
-  Serial.println("[Sue] System ready! / 系统就绪！\n");
+unsigned long chooseNextBlinkDelayMs() {
+  return (unsigned long)random(2500, 6800);
 }
 
 // ============================================================
-// loop() — Non-blocking / 非阻塞主循环
-// ⚠️ NO delay() allowed
+// Network
 // ============================================================
-void loop() {
-  // 1. Network maintenance / 网络维护
-  updateNetwork();
+bool connectWifiWithAttempts(int attempts, bool verbose) {
+  attempts = constrain(attempts, 1, 120);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+  WiFi.begin(STA_SSID, STA_PASSWORD);
 
-  // 2. Process OSC messages / 处理 OSC 消息
-  processOSC();
-
-  // 3. FSM servo update / 状态机舵机更新
-  updateFSM();
-
-  // 4. Serial debug commands / 串口调试命令
-  processSerial();
-}
-
-// ============================================================
-// Network Setup / 网络设置
-// ============================================================
-void setupNetwork() {
-  if (USE_AP_MODE) {
-    Serial.println("[Net] Starting AP mode... / 正在启动热点模式...");
-    WiFi.softAP(ap_ssid, ap_password);
-    Serial.printf("[Net] AP started. SSID: %s  IP: %s\n",
-                  ap_ssid, WiFi.softAPIP().toString().c_str());
-    networkConnected = true;
-
-    // Start mDNS immediately in AP mode / AP 模式立即启动 mDNS
-    startMDNS();
-  } else {
-    Serial.printf("[Net] Connecting to: %s\n", sta_ssid);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(sta_ssid, sta_password);
-    staConnecting = true;
-    staRetryCount = 0;
-    lastSTACheckMs = millis();
-  }
-}
-
-void updateNetwork() {
-  if (USE_AP_MODE) return;  // AP mode needs no maintenance / AP 模式无需维护
-
-  unsigned long now = millis();
-
-  if (staConnecting) {
-    if (now - lastSTACheckMs >= STA_RETRY_INTERVAL) {
-      lastSTACheckMs = now;
-
-      if (WiFi.status() == WL_CONNECTED) {
-        networkConnected = true;
-        staConnecting = false;
-        Serial.printf("[Net] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-        startMDNS();
-      } else {
-        staRetryCount++;
-        Serial.printf("[Net] Connecting... attempt %d/%d\n",
-                      staRetryCount, STA_MAX_RETRIES);
-
-        if (staRetryCount >= STA_MAX_RETRIES) {
-          Serial.println("[Net] STA failed. Falling back to AP mode...");
-          staConnecting = false;
-          WiFi.disconnect();
-          WiFi.softAP(ap_ssid, ap_password);
-          Serial.printf("[Net] AP fallback. SSID: %s  IP: %s\n",
-                        ap_ssid, WiFi.softAPIP().toString().c_str());
-          networkConnected = true;
-          startMDNS();
-        }
+  if (verbose) Serial.print("[Net] Connecting");
+  for (int i = 0; i < attempts; i++) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (verbose) {
+        Serial.print("\n[Net] Connected, IP: ");
+        Serial.println(WiFi.localIP());
       }
+      return true;
     }
-  } else if (networkConnected && WiFi.status() != WL_CONNECTED) {
-    networkConnected = false;
-    Serial.println("[Net] Connection lost. Reconnecting...");
-    WiFi.reconnect();
-    staConnecting = true;
-    staRetryCount = 0;
-    lastSTACheckMs = millis();
+    delay(WIFI_RETRY_DELAY_MS);
+    if (verbose) Serial.print(".");
+  }
+
+  if (verbose) Serial.println("\n[Net] STA connect failed");
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void setupNetwork() {
+  if (!connectWifiWithAttempts(WIFI_BOOT_CONNECT_ATTEMPTS, true)) {
+    Serial.println("[Net] Boot without WiFi, auto-retry enabled");
   }
 }
 
-void startMDNS() {
+void ensureWifiConnected() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  unsigned long now = millis();
+  if (now - lastWifiRetryMs < WIFI_RETRY_INTERVAL_MS) return;
+  lastWifiRetryMs = now;
+  Serial.println("[Net] WiFi disconnected, retrying...");
+  connectWifiWithAttempts(WIFI_AUTO_RETRY_ATTEMPTS, false);
+}
+
+void setupMDNS() {
+  if (mdnsStarted) return;
+  if (WiFi.status() != WL_CONNECTED) return;
   if (!MDNS.begin(NODE_ID)) {
     Serial.println("[Net] mDNS failed");
     return;
   }
-  MDNS.addService(MDNS_SERVICE, MDNS_PROTO, OSC_PORT);
-  MDNS.addServiceTxt(MDNS_SERVICE, MDNS_PROTO, "node_type", NODE_TYPE);
-  MDNS.addServiceTxt(MDNS_SERVICE, MDNS_PROTO, "node_id", NODE_ID);
-  Serial.printf("[Net] mDNS: %s.local  Service: %s.%s\n",
-                NODE_ID, MDNS_SERVICE, MDNS_PROTO);
+  MDNS.addService("osc", "udp", OSC_PORT);
+  MDNS.addServiceTxt("osc", "udp", "node_type", NODE_TYPE);
+  MDNS.addServiceTxt("osc", "udp", "node_id", NODE_ID);
+  MDNS.addService("datt_flower", "tcp", OSC_PORT);
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_type", NODE_TYPE);
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_id", NODE_ID);
+  mdnsStarted = true;
+  Serial.printf("[Net] mDNS ready: %s.local\n", NODE_ID);
+}
+
+void ensureMDNS() {
+  if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
+    setupMDNS();
+  }
+}
+
+void printWifiStatus() {
+  wl_status_t st = WiFi.status();
+  Serial.println("\n=== WiFi Status ===");
+  Serial.printf("SSID: %s\n", STA_SSID);
+  Serial.printf("Status: %d\n", (int)st);
+  if (st == WL_CONNECTED) {
+    Serial.printf("IP: %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+    Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+  } else {
+    Serial.println("IP: (not connected)");
+  }
+  Serial.println("===================\n");
+}
+
+void manualWifiRetry(int attempts) {
+  wifiManualRetryAttempts = constrain(attempts, 1, 120);
+  Serial.printf("[Net] Manual retry, attempts=%d\n", wifiManualRetryAttempts);
+  bool ok = connectWifiWithAttempts(wifiManualRetryAttempts, true);
+  if (ok) ensureMDNS();
 }
 
 // ============================================================
-// OSC Processing / OSC 处理
+// Petal / state control
 // ============================================================
-void processOSC() {
-  int packetSize = udp.parsePacket();
-  if (packetSize <= 0) return;
-
-  OSCMessage msg;
-  while (packetSize--) {
-    msg.fill(udp.read());
+void setPetalAngleSafe(int angle, bool smooth) {
+  int safe = constrain(angle, SERVO_SAFE_MIN_ANGLE, SERVO_SAFE_MAX_ANGLE);
+  targetPetalAngle = safe;
+  if (!smooth) {
+    currentPetalAngle = safe;
+    petalServo.write(currentPetalAngle);
+    petalMode = PETAL_IDLE;
+  } else {
+    petalMode = PETAL_MOVING;
   }
+}
 
-  if (msg.hasError()) {
-    Serial.println("[OSC] Message error");
+void setPetalOpenPercent(int pct, bool smooth) {
+  setPetalAngleSafe(mapOpenPctToAngle(pct), smooth);
+}
+
+void startPetalBreathe(int minPct, int maxPct, int periodMs) {
+  breathMinPct = constrain(minPct, 0, 100);
+  breathMaxPct = constrain(maxPct, 0, 100);
+  if (breathMinPct > breathMaxPct) {
+    int t = breathMinPct;
+    breathMinPct = breathMaxPct;
+    breathMaxPct = t;
+  }
+  breathPeriodMs = constrain(periodMs, 800, 12000);
+  breathStartMs = millis();
+  petalMode = PETAL_BREATHING;
+}
+
+void stopPetalBreathe() {
+  if (petalMode == PETAL_BREATHING) {
+    petalMode = PETAL_IDLE;
+  }
+}
+
+void updatePetal() {
+  unsigned long now = millis();
+  if (petalMode == PETAL_BREATHING) {
+    float phase = (float)(now - breathStartMs) / (float)breathPeriodMs;
+    float wave = 0.5f + 0.5f * sinf(phase * 2.0f * PI);
+    int pct = breathMinPct + (int)roundf((float)(breathMaxPct - breathMinPct) * wave);
+    int angle = mapOpenPctToAngle(pct);
+    currentPetalAngle = angle;
+    targetPetalAngle = angle;
+    petalServo.write(angle);
     return;
   }
 
-  char address[64];
-  msg.getAddress(address, 0, sizeof(address));
-  Serial.printf("[OSC] Received: %s\n", address);
+  if (petalMode != PETAL_MOVING) return;
+  if (now - lastPetalStepMs < (unsigned long)petalStepIntervalMs) return;
+  lastPetalStepMs = now;
 
-  // Route OSC messages / 路由 OSC 消息
-  if (strcmp(address, "/state") == 0) {
-    handleStateOSC(msg);
-  }
-  else if (strcmp(address, "/angle") == 0) {
-    if (msg.isInt(0)) {
-      int angle = constrain(msg.getInt(0), 0, 180);
-      setTargetAngle(angle);
-      Serial.printf("[OSC] Direct angle: %d\n", angle);
-    }
-  }
-  else if (strcmp(address, "/speed") == 0) {
-    if (msg.isInt(0)) {
-      stepIntervalMs = constrain(msg.getInt(0), 1, 200);
-      Serial.printf("[OSC] Step speed: %d ms/deg\n", stepIntervalMs);
-    }
-  }
-  else if (strcmp(address, "/led") == 0) {
-    if (msg.isInt(0) && msg.isInt(1)) {
-      int r = msg.getInt(0);
-      int g = msg.getInt(1);
-      ledcWrite(RED_LED, constrain(r, 0, 255));
-      ledcWrite(GREEN_LED, constrain(g, 0, 255));
-      Serial.printf("[OSC] LED: R=%d G=%d\n", r, g);
-    }
-  }
-  else if (strcmp(address, "/stop") == 0) {
-    emergencyStop();
+  if (currentPetalAngle < targetPetalAngle) {
+    currentPetalAngle++;
+    petalServo.write(currentPetalAngle);
+  } else if (currentPetalAngle > targetPetalAngle) {
+    currentPetalAngle--;
+    petalServo.write(currentPetalAngle);
+  } else {
+    petalMode = PETAL_IDLE;
   }
 }
 
-void handleStateOSC(OSCMessage &msg) {
-  // Accept string or int state commands / 接受字符串或整数状态指令
-  if (msg.isString(0)) {
-    char state[32];
-    msg.getString(0, state, sizeof(state));
-    applyState(state);
-  } else if (msg.isInt(0)) {
-    int stateNum = msg.getInt(0);
-    switch (stateNum) {
-      case 0: applyState("idle");    break;
-      case 1: applyState("relax");   break;
-      case 2: applyState("danger");  break;
-      case 3: applyState("alert");   break;
-      case 4: applyState("calm");    break;
-      case 5: applyState("breathe"); break;
-    }
-  }
-}
-
-// ============================================================
-// State Presets / 状态预设
-// ============================================================
 void applyState(const char* state) {
-  Serial.printf("[Sue] State: %s\n", state);
+  if (!state) return;
+  Serial.printf("[Sue] state=%s\n", state);
 
-  if (strcmp(state, "danger") == 0) {
-    // Danger: red LED + close flower / 危险：红灯 + 闭合花朵
-    ledcWrite(RED_LED, 255);
-    ledcWrite(GREEN_LED, 0);
-    startClosing();
-  }
-  else if (strcmp(state, "relax") == 0) {
-    // Relax: green LED + open flower / 放松：绿灯 + 开放花朵
-    ledcWrite(RED_LED, 0);
-    ledcWrite(GREEN_LED, 255);
-    startOpening();
-  }
-  else if (strcmp(state, "idle") == 0) {
-    // Idle: all off, close flower / 待机：全灭，闭合花朵
-    ledcWrite(RED_LED, 0);
-    ledcWrite(GREEN_LED, 0);
-    startClosing();
-  }
-  else if (strcmp(state, "alert") == 0) {
-    // Alert: both LEDs on, half-open / 警戒：双灯亮，半开
-    ledcWrite(RED_LED, 255);
-    ledcWrite(GREEN_LED, 255);
-    setTargetAngle((CLOSED_ANGLE + OPEN_ANGLE) / 2);
-    currentState = STATE_OPENING;
-    stateEntryMs = millis();
-  }
-  else if (strcmp(state, "calm") == 0) {
-    // Calm: green LED, slow open / 平静：绿灯，慢开
-    ledcWrite(RED_LED, 0);
-    ledcWrite(GREEN_LED, 255);
-    stepIntervalMs = 40;  // Slower / 更慢
-    startOpening();
-  }
-  else if (strcmp(state, "breathe") == 0) {
-    // Breathe: open then auto-close after 3s / 呼吸：开后 3 秒自动闭合
-    ledcWrite(RED_LED, 0);
-    ledcWrite(GREEN_LED, 255);
-    startOpening();
-    autoCloseMs = 3000;
-  }
-  else {
-    Serial.printf("[Sue] Unknown state: %s\n", state);
-  }
-}
-
-// ============================================================
-// FSM Control / 状态机控制
-// ============================================================
-void startOpening() {
-  targetAngle = OPEN_ANGLE;
-  currentState = STATE_OPENING;
-  stateEntryMs = millis();
-}
-
-void startClosing() {
-  targetAngle = CLOSED_ANGLE;
-  currentState = STATE_CLOSING;
-  stateEntryMs = millis();
-}
-
-void setTargetAngle(int angle) {
-  targetAngle = constrain(angle, 0, 180);
-  if (targetAngle > currentAngle) {
-    currentState = STATE_OPENING;
-  } else if (targetAngle < currentAngle) {
-    currentState = STATE_CLOSING;
-  }
-  stateEntryMs = millis();
-}
-
-void updateFSM() {
-  unsigned long now = millis();
-
-  switch (currentState) {
-    case STATE_IDLE:
-      // Nothing to do / 无操作
-      break;
-
-    case STATE_OPENING:
-      if (now - lastStepMs >= (unsigned long)stepIntervalMs) {
-        lastStepMs = now;
-        if (currentAngle < targetAngle) {
-          currentAngle++;
-          petalServo.write(currentAngle);
-        } else {
-          // Reached target / 到达目标
-          currentState = STATE_OPENED;
-          stateEntryMs = now;
-          Serial.printf("[FSM] Opened at %d degrees\n", currentAngle);
-        }
-      }
-      break;
-
-    case STATE_OPENED:
-      // Auto-close timer if set / 自动闭合定时器
-      if (autoCloseMs > 0 && (now - stateEntryMs >= autoCloseMs)) {
-        autoCloseMs = 0;
-        startClosing();
-        Serial.println("[FSM] Auto-closing after timer");
-      }
-      break;
-
-    case STATE_CLOSING:
-      if (now - lastStepMs >= (unsigned long)stepIntervalMs) {
-        lastStepMs = now;
-        if (currentAngle > targetAngle) {
-          currentAngle--;
-          petalServo.write(currentAngle);
-        } else {
-          // Reached target / 到达目标
-          currentState = STATE_IDLE;
-          stateEntryMs = now;
-          Serial.printf("[FSM] Closed at %d degrees\n", currentAngle);
-        }
-      }
-      break;
+  if (strcmp(state, "bloom") == 0 || strcmp(state, "relax") == 0) {
+    stopPetalBreathe();
+    petalStepIntervalMs = 18;
+    setPetalOpenPercent(95, true);
+    eye.trackEnabled = true;
+    eye.autoBlink = true;
+    eye.autoBreathe = true;
+    eye.manualOpenOverride = false;
+  } else if (strcmp(state, "alert") == 0 || strcmp(state, "danger") == 0) {
+    stopPetalBreathe();
+    petalStepIntervalMs = 8;
+    setPetalAngleSafe(PETAL_ALERT_ANGLE, true);
+    eye.trackEnabled = true;
+    eye.autoBlink = true;
+    eye.autoBreathe = false;
+    eye.manualOpenOverride = true;
+    eye.manualOpen = 0.92f;
+  } else if (strcmp(state, "soothe") == 0 || strcmp(state, "calm") == 0) {
+    petalStepIntervalMs = 24;
+    startPetalBreathe(45, 78, 4200);
+    eye.trackEnabled = true;
+    eye.autoBlink = true;
+    eye.autoBreathe = true;
+    eye.manualOpenOverride = false;
+  } else if (strcmp(state, "breathe") == 0) {
+    petalStepIntervalMs = 20;
+    startPetalBreathe(30, 85, 3600);
+    eye.trackEnabled = true;
+    eye.autoBlink = true;
+    eye.autoBreathe = true;
+    eye.manualOpenOverride = false;
+  } else if (strcmp(state, "rest") == 0 || strcmp(state, "idle") == 0) {
+    stopPetalBreathe();
+    petalStepIntervalMs = 28;
+    setPetalOpenPercent(15, true);
+    eye.trackEnabled = false;
+    eye.autoBlink = true;
+    eye.autoBreathe = true;
+    eye.manualOpenOverride = false;
+    eye.targetX = 0.0f;
+    eye.targetY = 0.0f;
   }
 }
 
 void emergencyStop() {
-  currentState = STATE_IDLE;
-  targetAngle = currentAngle;  // Stop where we are / 原地停止
-  ledcWrite(RED_LED, 0);
-  ledcWrite(GREEN_LED, 0);
-  autoCloseMs = 0;
-  Serial.println("[Sue] Emergency stop!");
+  petalMode = PETAL_IDLE;
+  targetPetalAngle = currentPetalAngle;
+  eye.trackEnabled = false;
+  eye.targetX = 0.0f;
+  eye.targetY = 0.0f;
+  Serial.println("[Sue] emergency stop");
 }
 
 // ============================================================
-// Serial Debug / 串口调试
+// Eye update / render
 // ============================================================
-void processSerial() {
-  if (Serial.available() <= 0) return;
+void setTrackNorm(float nx, float ny) {
+  nx = clampf(nx, 0.0f, 1.0f);
+  ny = clampf(ny, 0.0f, 1.0f);
+  eye.targetX = clampf(((nx * 2.0f) - 1.0f) * eye.gazeLimitX, -1.0f, 1.0f);
+  eye.targetY = clampf(((ny * 2.0f) - 1.0f) * eye.gazeLimitY, -1.0f, 1.0f);
+  eye.lastTrackInputMs = millis();
+}
 
-  char cmdBuf[64];
-  int len = 0;
-  while (Serial.available() > 0 && len < (int)(sizeof(cmdBuf) - 1)) {
-    char c = Serial.read();
-    if (c == '\n' || c == '\r') break;
-    cmdBuf[len++] = c;
-  }
-  cmdBuf[len] = '\0';
-  if (len == 0) return;
+void setTrackPixel(int x, int y, int frameW, int frameH) {
+  frameW = max(frameW, 1);
+  frameH = max(frameH, 1);
+  float nx = (float)constrain(x, 0, frameW) / (float)frameW;
+  float ny = (float)constrain(y, 0, frameH) / (float)frameH;
+  setTrackNorm(nx, ny);
+}
 
-  // Convert to lowercase / 转换为小写
-  for (int i = 0; cmdBuf[i]; i++) {
-    if (cmdBuf[i] >= 'A' && cmdBuf[i] <= 'Z')
-      cmdBuf[i] += ('a' - 'A');
+void setManualEyeOpenPercent(int pct) {
+  eye.manualOpenOverride = true;
+  eye.manualOpen = clampf((float)constrain(pct, 0, 100) / 100.0f, 0.03f, 1.0f);
+}
+
+void setManualEyeLook(float x, float y) {
+  eye.trackEnabled = false;
+  eye.targetX = clampf(x * eye.gazeLimitX, -1.0f, 1.0f);
+  eye.targetY = clampf(y * eye.gazeLimitY, -1.0f, 1.0f);
+}
+
+void drawEyeFrame(
+  Arduino_GFX* c,
+  float gazeX,
+  float gazeY,
+  float openFactor,
+  float breatheScale,
+  float breatheDrift,
+  float pupilSpinPhase,
+  bool pupilAutoSpin
+) {
+  int irisCx = LCX + (int)roundf(gazeX * 23.0f);
+  int irisCy = LCY + (int)roundf(gazeY * 18.0f + breatheDrift);
+  int irisOuter = (int)roundf(30.0f * breatheScale);
+  int irisMid = (int)roundf(23.0f * breatheScale);
+  int irisInner = (int)roundf(14.0f * breatheScale);
+  int pupilR = (int)roundf(11.0f * breatheScale);
+  int pupilCx = irisCx;
+  int pupilCy = irisCy;
+  int hiCx = pupilCx - 4;
+  int hiCy = pupilCy - 6;
+
+  if (pupilAutoSpin) {
+    // Pupil/highlight-only orbit amount is driven by lid open factor.
+    float orbitR = 1.2f + (1.0f - openFactor) * 4.8f;
+    float dx = orbitR * cosf(pupilSpinPhase);
+    float dy = orbitR * sinf(pupilSpinPhase * 0.85f + 0.45f);
+    pupilCx += (int)roundf(dx);
+    pupilCy += (int)roundf(dy);
+    hiCx = pupilCx + (int)roundf((orbitR + 1.2f) * cosf(pupilSpinPhase + 1.85f));
+    hiCy = pupilCy + (int)roundf((orbitR + 0.8f) * sinf(pupilSpinPhase + 2.2f));
   }
 
-  // Split command and args / 分割命令和参数
-  char* space = strchr(cmdBuf, ' ');
-  const char* args = "";
-  if (space) {
-    *space = '\0';
-    args = space + 1;
+  c->fillScreen(COLOR_BLACK);
+  c->fillCircle(LCX, LCY, 66, COLOR_SCLERA);
+  c->fillRoundRect(20, 14, PATCH_W - 40, 18, 9, COLOR_SHADOW);
+  c->fillCircle(irisCx, irisCy, irisOuter, COLOR_IRIS_DARK);
+  c->fillCircle(irisCx, irisCy, irisMid, COLOR_IRIS_MID);
+  c->fillCircle(irisCx, irisCy, irisInner, COLOR_IRIS_LIGHT);
+  c->fillCircle(pupilCx, pupilCy, pupilR, COLOR_BLACK);
+  c->fillCircle(hiCx, hiCy, 4, COLOR_WHITE);
+
+  openFactor = clampf(openFactor, 0.02f, 1.0f);
+  int coverPx = (int)roundf((1.0f - openFactor) * 66.0f);
+  int topEdge = (LCY - 66) + coverPx;
+  int botEdge = (LCY + 66) - coverPx;
+  c->fillRect(0, 0, PATCH_W, max(0, topEdge), COLOR_BLACK);
+  c->fillRect(0, max(0, botEdge), PATCH_W, PATCH_H - max(0, botEdge), COLOR_BLACK);
+  c->drawFastHLine(0, constrain(topEdge, 0, PATCH_H - 1), PATCH_W, COLOR_LID);
+  c->drawFastHLine(0, constrain(botEdge, 0, PATCH_H - 1), PATCH_W, COLOR_LID);
+}
+
+void drawStaticBackground() {
+  panel->fillScreen(COLOR_BLACK);
+}
+
+void updateEye(bool force) {
+  unsigned long now = millis();
+  unsigned long dtMs = (lastEyeFrameMs > 0) ? (now - lastEyeFrameMs) : EYE_FRAME_INTERVAL_MS;
+  if (!force && now - lastEyeFrameMs < EYE_FRAME_INTERVAL_MS) return;
+  lastEyeFrameMs = now;
+
+  if (eye.trackEnabled && (now - eye.lastTrackInputMs > TRACK_HOLD_TIMEOUT_MS)) {
+    eye.targetX = 0.0f;
+    eye.targetY = 0.0f;
   }
 
-  if (strcmp(cmdBuf, "danger") == 0) {
-    applyState("danger");
+  eye.gazeX += (eye.targetX - eye.gazeX) * 0.18f;
+  eye.gazeY += (eye.targetY - eye.gazeY) * 0.18f;
+
+  if (eye.autoBlink && !eye.blinkRunning && now >= eye.nextBlinkMs) {
+    eye.blinkRunning = true;
+    eye.blinkStartMs = now;
   }
-  else if (strcmp(cmdBuf, "relax") == 0) {
-    applyState("relax");
+
+  float blinkOpen = 1.0f;
+  if (eye.blinkRunning) {
+    float p = (float)(now - eye.blinkStartMs) / (float)eye.blinkDurationMs;
+    if (p >= 1.0f) {
+      eye.blinkRunning = false;
+      eye.nextBlinkMs = now + chooseNextBlinkDelayMs();
+      blinkOpen = 1.0f;
+    } else {
+      blinkOpen = 1.0f - sinf(p * PI);
+      blinkOpen = clampf(blinkOpen, 0.04f, 1.0f);
+    }
   }
-  else if (strcmp(cmdBuf, "idle") == 0) {
-    applyState("idle");
+
+  float breatheScale = 1.0f;
+  float breatheDrift = 0.0f;
+  if (eye.autoBreathe) {
+    float phase = (float)now / 2400.0f;
+    breatheScale = 1.0f + 0.04f * sinf(phase * 2.0f * PI);
+    breatheDrift = 1.6f * sinf(phase * PI);
   }
-  else if (strcmp(cmdBuf, "alert") == 0) {
-    applyState("alert");
+
+  float openBase = eye.manualOpenOverride ? eye.manualOpen : 1.0f;
+  float openFactor = clampf(openBase * blinkOpen, 0.02f, 1.0f);
+
+  if (eye.pupilAutoSpin) {
+    float spinSpeed = 0.65f + ((1.0f - openFactor) * 2.8f);
+    eye.pupilSpinPhase += spinSpeed * ((float)dtMs / 1000.0f);
+    if (eye.pupilSpinPhase > (2.0f * PI)) {
+      eye.pupilSpinPhase = fmodf(eye.pupilSpinPhase, 2.0f * PI);
+    }
   }
-  else if (strcmp(cmdBuf, "calm") == 0) {
-    applyState("calm");
-  }
-  else if (strcmp(cmdBuf, "breathe") == 0) {
-    applyState("breathe");
-  }
-  else if (strcmp(cmdBuf, "angle") == 0) {
-    int a = atoi(args);
-    setTargetAngle(a);
-    Serial.printf("[Serial] Target angle: %d\n", a);
-  }
-  else if (strcmp(cmdBuf, "speed") == 0) {
-    stepIntervalMs = constrain(atoi(args), 1, 200);
-    Serial.printf("[Serial] Step speed: %d ms/deg\n", stepIntervalMs);
-  }
-  else if (strcmp(cmdBuf, "led") == 0) {
-    int r = 0, g = 0;
-    sscanf(args, "%d %d", &r, &g);
-    ledcWrite(RED_LED, constrain(r, 0, 255));
-    ledcWrite(GREEN_LED, constrain(g, 0, 255));
-    Serial.printf("[Serial] LED: R=%d G=%d\n", r, g);
-  }
-  else if (strcmp(cmdBuf, "status") == 0) {
-    const char* stateNames[] = {"IDLE", "OPENING", "OPENED", "CLOSING"};
-    Serial.printf("[Status] State: %s  Angle: %d  Target: %d  Speed: %d ms/deg\n",
-                  stateNames[currentState], currentAngle, targetAngle, stepIntervalMs);
-    Serial.printf("[Status] Network: %s  IP: %s\n",
-                  networkConnected ? "connected" : "disconnected",
-                  USE_AP_MODE ? WiFi.softAPIP().toString().c_str()
-                              : WiFi.localIP().toString().c_str());
-  }
-  else if (strcmp(cmdBuf, "stop") == 0) {
-    emergencyStop();
-  }
-  else if (strcmp(cmdBuf, "help") == 0 || strcmp(cmdBuf, "?") == 0) {
-    printHelp();
-  }
-  else {
-    Serial.printf("[Serial] Unknown: '%s'. Type 'help'.\n", cmdBuf);
-  }
+
+  drawEyeFrame(
+    backCanvas,
+    eye.gazeX,
+    eye.gazeY,
+    openFactor,
+    breatheScale,
+    breatheDrift,
+    eye.pupilSpinPhase,
+    eye.pupilAutoSpin
+  );
+  ((Arduino_Canvas*)backCanvas)->flush();
+  Arduino_GFX* tmp = frontCanvas;
+  frontCanvas = backCanvas;
+  backCanvas = tmp;
 }
 
 // ============================================================
-// Help Text / 帮助信息
+// OSC
 // ============================================================
+void routeState(OSCMessage& msg, int addrOffset) {
+  if (msg.isString(0)) {
+    char s[24];
+    msg.getString(0, s, sizeof(s));
+    applyState(s);
+  } else if (msg.isInt(0)) {
+    int v = msg.getInt(0);
+    if (v == 0) applyState("rest");
+    else if (v == 1) applyState("bloom");
+    else if (v == 2) applyState("alert");
+    else if (v == 3) applyState("soothe");
+  }
+}
+
+void routeAngle(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) setPetalAngleSafe(msg.getInt(0), true); }
+void routeOpen(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) setPetalOpenPercent(msg.getInt(0), true); }
+void routeSpeed(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) petalStepIntervalMs = constrain(msg.getInt(0), 2, 120); }
+void routeStop(OSCMessage& msg, int addrOffset) { emergencyStop(); }
+void routeTrackAuto(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) eye.trackEnabled = msg.getInt(0) != 0; }
+void routeTrackNorm(OSCMessage& msg, int addrOffset) {
+  float x = msg.isFloat(0) ? msg.getFloat(0) : (msg.isInt(0) ? (float)msg.getInt(0) : 0.5f);
+  float y = msg.isFloat(1) ? msg.getFloat(1) : (msg.isInt(1) ? (float)msg.getInt(1) : 0.5f);
+  setTrackNorm(x, y);
+}
+void routeTrackXY(OSCMessage& msg, int addrOffset) {
+  if (!msg.isInt(0) || !msg.isInt(1)) return;
+  int x = msg.getInt(0), y = msg.getInt(1);
+  int w = msg.isInt(2) ? msg.getInt(2) : 1920;
+  int h = msg.isInt(3) ? msg.getInt(3) : 1080;
+  setTrackPixel(x, y, w, h);
+}
+void routeTrackCenter(OSCMessage& msg, int addrOffset) { eye.targetX = 0.0f; eye.targetY = 0.0f; }
+void routeEyeLook(OSCMessage& msg, int addrOffset) {
+  float x = msg.isFloat(0) ? msg.getFloat(0) : (msg.isInt(0) ? (float)msg.getInt(0) / 100.0f : 0.0f);
+  float y = msg.isFloat(1) ? msg.getFloat(1) : (msg.isInt(1) ? (float)msg.getInt(1) / 100.0f : 0.0f);
+  setManualEyeLook(x, y);
+}
+void routeEyeOpen(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) setManualEyeOpenPercent(msg.getInt(0)); }
+void routeEyeBlink(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) eye.autoBlink = msg.getInt(0) != 0; }
+void routeEyeBreathe(OSCMessage& msg, int addrOffset) { if (msg.isInt(0)) eye.autoBreathe = msg.getInt(0) != 0; }
+void routeEyeLimits(OSCMessage& msg, int addrOffset) {
+  int lx = msg.isInt(0) ? msg.getInt(0) : 100;
+  int ly = msg.isInt(1) ? msg.getInt(1) : lx;
+  eye.gazeLimitX = clampf((float)constrain(lx, 10, 100) / 100.0f, 0.1f, 1.0f);
+  eye.gazeLimitY = clampf((float)constrain(ly, 10, 100) / 100.0f, 0.1f, 1.0f);
+}
+void routeEyePupilAuto(OSCMessage& msg, int addrOffset) {
+  if (msg.isInt(0)) eye.pupilAutoSpin = msg.getInt(0) != 0;
+}
+
+void routeInfoSelf(OSCMessage& msg, int addrOffset) {
+  OSCMessage reply("/info/self");
+  reply.add(NODE_ID);
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macStr[18];
+  sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  reply.add(macStr);
+  reply.add("STA");
+  IPAddress ip = WiFi.localIP();
+  char ipStr[16];
+  sprintf(ipStr, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+  reply.add(ipStr);
+  udp.beginPacket(udp.remoteIP(), udp.remotePort()); reply.send(udp); udp.endPacket(); reply.empty();
+}
+
+void routeInfoServo(OSCMessage& msg, int addrOffset) {
+  OSCMessage reply("/info/servo");
+  reply.add((int32_t)currentPetalAngle);
+  reply.add((int32_t)targetPetalAngle);
+  reply.add((int32_t)petalStepIntervalMs);
+  reply.add((int32_t)(eye.trackEnabled ? 1 : 0));
+  udp.beginPacket(udp.remoteIP(), udp.remotePort()); reply.send(udp); udp.endPacket(); reply.empty();
+}
+
+void processOSC() {
+  int size = udp.parsePacket();
+  if (size <= 0) return;
+  OSCMessage msg;
+  while (size--) msg.fill(udp.read());
+  if (msg.hasError()) return;
+  msg.route("/state", routeState);
+  msg.route("/angle", routeAngle);
+  msg.route("/open", routeOpen);
+  msg.route("/speed", routeSpeed);
+  msg.route("/stop", routeStop);
+  msg.route("/track/auto", routeTrackAuto);
+  msg.route("/track/mode", routeTrackAuto);
+  msg.route("/track/norm", routeTrackNorm);
+  msg.route("/track/xy", routeTrackXY);
+  msg.route("/track/center", routeTrackCenter);
+  msg.route("/eye/look", routeEyeLook);
+  msg.route("/eye/open", routeEyeOpen);
+  msg.route("/eye/blink", routeEyeBlink);
+  msg.route("/eye/breathe", routeEyeBreathe);
+  msg.route("/eye/limits", routeEyeLimits);
+  msg.route("/eye/pupil_auto", routeEyePupilAuto);
+  msg.route("/info/self", routeInfoSelf);
+  msg.route("/info/servo", routeInfoServo);
+}
+
+// ============================================================
+// Serial
+// ============================================================
+void parseSerialLine() {
+  if (!Serial.available()) return;
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line == "help") { printHelp(); return; }
+  if (line == "info") { printSelfInfo(); return; }
+  if (line == "status") {
+    Serial.printf("[Status] angle=%d target=%d mode=%d eye=(%.2f,%.2f)\n", currentPetalAngle, targetPetalAngle, (int)petalMode, eye.gazeX, eye.gazeY);
+    return;
+  }
+  if (line == "wifi status") { printWifiStatus(); return; }
+  if (line.startsWith("wifi retry")) {
+    int attempts = wifiManualRetryAttempts;
+    sscanf(line.c_str(), "wifi retry %d", &attempts);
+    manualWifiRetry(attempts);
+    return;
+  }
+  if (line.startsWith("state ")) { applyState(line.substring(6).c_str()); return; }
+  if (line.startsWith("angle ")) { setPetalAngleSafe(line.substring(6).toInt(), true); return; }
+  if (line.startsWith("open ")) { setPetalOpenPercent(line.substring(5).toInt(), true); return; }
+  if (line.startsWith("speed ")) { petalStepIntervalMs = constrain(line.substring(6).toInt(), 2, 120); return; }
+  if (line.startsWith("look ")) {
+    float x = 0, y = 0;
+    if (sscanf(line.c_str(), "look %f %f", &x, &y) == 2) setManualEyeLook(x, y);
+    return;
+  }
+  if (line.startsWith("eyeopen ")) { setManualEyeOpenPercent(line.substring(8).toInt()); return; }
+  if (line.startsWith("eyelimits ")) {
+    int lx = 100, ly = 100;
+    if (sscanf(line.c_str(), "eyelimits %d %d", &lx, &ly) >= 1) {
+      eye.gazeLimitX = clampf((float)constrain(lx, 10, 100) / 100.0f, 0.1f, 1.0f);
+      eye.gazeLimitY = clampf((float)constrain(ly, 10, 100) / 100.0f, 0.1f, 1.0f);
+    }
+    return;
+  }
+  if (line == "pupilauto on") { eye.pupilAutoSpin = true; return; }
+  if (line == "pupilauto off") { eye.pupilAutoSpin = false; return; }
+  if (line == "track on") { eye.trackEnabled = true; return; }
+  if (line == "track off") { eye.trackEnabled = false; return; }
+}
+
+void printSelfInfo() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  IPAddress ip = WiFi.localIP();
+  Serial.println("\n=== Sue Node Info ===");
+  Serial.printf("Node ID: %s\n", NODE_ID);
+  Serial.printf("Node Type: %s\n", NODE_TYPE);
+  Serial.printf("IP: %d.%d.%d.%d\n", ip[0], ip[1], ip[2], ip[3]);
+  Serial.printf("MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.printf("Servo angle: %d (safe %d..%d)\n", currentPetalAngle, SERVO_SAFE_MIN_ANGLE, SERVO_SAFE_MAX_ANGLE);
+  Serial.printf(
+    "Eye track=%d blink=%d breathe=%d pupilAuto=%d limits=(%.2f,%.2f)\n",
+    eye.trackEnabled ? 1 : 0,
+    eye.autoBlink ? 1 : 0,
+    eye.autoBreathe ? 1 : 0,
+    eye.pupilAutoSpin ? 1 : 0,
+    eye.gazeLimitX,
+    eye.gazeLimitY
+  );
+  Serial.println("=====================\n");
+}
+
 void printHelp() {
-  Serial.println("\n=== Sue Node Commands / 命令列表 ===");
-  Serial.println("--- State presets / 状态预设 ---");
-  Serial.println("  danger   - Red LED + close / 红灯 + 闭合");
-  Serial.println("  relax    - Green LED + open / 绿灯 + 开放");
-  Serial.println("  idle     - All off + close / 全灭 + 闭合");
-  Serial.println("  alert    - Both LEDs + half-open / 双灯 + 半开");
-  Serial.println("  calm     - Green LED + slow open / 绿灯 + 慢开");
-  Serial.println("  breathe  - Open then auto-close 3s / 开后3秒自动闭");
-  Serial.println("--- Fine control / 精细控制 ---");
-  Serial.println("  angle [0-180]  - Set target angle / 设置目标角度");
-  Serial.println("  speed [1-200]  - Step interval ms/deg / 步进间隔");
-  Serial.println("  led [R] [G]    - LED brightness (0-255) / LED 亮度");
-  Serial.println("--- System ---");
-  Serial.println("  status   - Show current state / 显示当前状态");
-  Serial.println("  stop     - Emergency stop / 紧急停止");
-  Serial.println("  help/?   - This help / 帮助");
-  Serial.println("--- OSC (via network) ---");
-  Serial.println("  /state [danger|relax|idle|alert|calm|breathe]");
-  Serial.println("  /state [0-5]   - Same as above by number");
-  Serial.println("  /angle [value] - Direct servo angle");
-  Serial.println("  /speed [value] - Step speed ms/deg");
-  Serial.println("  /led [r] [g]   - LED control");
-  Serial.println("  /stop          - Emergency stop");
-  Serial.println("==========================================\n");
+  Serial.println("\n=== Sue Commands ===");
+  Serial.println("state <rest|bloom|alert|soothe|relax|danger|calm|breathe|idle>");
+  Serial.println("open <0-100> | angle <safe-angle> | speed <2-120>");
+  Serial.println("look <x y>  (range -1..1)");
+  Serial.println("eyeopen <0-100>");
+  Serial.println("eyelimits <x% y%>  (10..100)");
+  Serial.println("pupilauto on|off");
+  Serial.println("track on|off");
+  Serial.println("wifi status | wifi retry <attempts>");
+  Serial.println("status | info | help");
+  Serial.println("====================\n");
+}
+
+// ============================================================
+// Arduino setup / loop
+// ============================================================
+void setup() {
+  Serial.begin(115200);
+  Serial.setTimeout(20);
+  randomSeed((uint32_t)esp_random());
+  Serial.println("\n========== DATT3700 Sue Node ==========");
+
+  panel->begin();
+  panel->setRotation(2);
+  eyeCanvasA->begin();
+  eyeCanvasB->begin();
+  drawStaticBackground();
+
+  petalServo.setPeriodHertz(50);
+  petalServo.attach(SERVO_PIN, SERVO_MIN_US, SERVO_MAX_US);
+  petalServo.write(PETAL_CLOSED_ANGLE);
+  currentPetalAngle = PETAL_CLOSED_ANGLE;
+  targetPetalAngle = PETAL_CLOSED_ANGLE;
+
+  eye.nextBlinkMs = millis() + chooseNextBlinkDelayMs();
+
+  setupNetwork();
+  setupMDNS();
+  udp.begin(OSC_PORT);
+  Serial.printf("[OSC] Listening on %d\n", OSC_PORT);
+
+  applyState("rest");
+  updateEye(true);
+  printHelp();
+}
+
+void loop() {
+  processOSC();
+  parseSerialLine();
+  ensureWifiConnected();
+  ensureMDNS();
+  updatePetal();
+  updateEye(false);
 }

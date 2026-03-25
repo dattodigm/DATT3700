@@ -34,6 +34,7 @@ def main():
         }
     )
     app_module._selected_device = "sylvie_1"
+    app_module._set_control_mode(app_module.CONTROL_MODE_EMOTION_MANUAL, sync_target=False)
     app_module._set_camera_index(args.camera)
 
     # Auto-discover LAN devices once at startup for showcase flow.

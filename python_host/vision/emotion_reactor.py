@@ -412,13 +412,13 @@ class EmotionReactor:
         node = str(node_type or "").lower()
 
         if node == "sue":
-            mapping = {
-                "BLOOM": ("/state", ["relax"]),
-                "ALERT": ("/state", ["danger"]),
-                "SOOTHE": ("/state", ["calm"]),
-                "REST": ("/state", ["idle"]),
+            options = {
+                "BLOOM": [("/state", ["bloom"]), ("/state", ["relax"])],
+                "ALERT": [("/state", ["alert"]), ("/state", ["danger"])],
+                "SOOTHE": [("/state", ["soothe"]), ("/state", ["calm"])],
+                "REST": [("/state", ["rest"]), ("/state", ["idle"])],
             }
-            return mapping.get(flower_emotion)
+            return self._next_option(node, flower_emotion, options)
 
         if node == "kait":
             options = {

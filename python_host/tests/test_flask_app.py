@@ -235,6 +235,16 @@ class TestFlaskAPI:
         assert history.status_code == 200
         hist_data = json.loads(history.data)
         assert "items" in hist_data
+        assert "capacity" in hist_data
+
+        cleared = client.post(
+            "/api/osc/history/clear",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        assert cleared.status_code == 200
+        cleared_data = json.loads(cleared.data)
+        assert cleared_data["status"] == "ok"
 
     def test_api_camera_state(self, client):
         resp = client.get("/api/camera/state")

@@ -17,6 +17,12 @@ const char* MDNS_NAME = "F7OWER_kait";
 // --- OSC 端口 ---
 const int OSC_PORT = 8888;
 
+const int WIFI_BOOT_CONNECT_ATTEMPTS = 24;
+const int WIFI_AUTO_RETRY_ATTEMPTS = 10;
+const int WIFI_MANUAL_RETRY_DEFAULT = 6;
+const int WIFI_RETRY_DELAY_MS = 500;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 6000;
+
 // --- 引脚定义 ---
 const int MOTOR_PWM_PIN = 22;   // PWM 速度控制
 const int MOTOR_DIR_PIN = 23;   // 方向控制
@@ -33,6 +39,9 @@ const int MOTOR_KICK_START_DELAY = 30;   // 启动冲击延时 (ms)
 // 运行时变量
 // ============================================================
 WiFiUDP udp;
+unsigned long lastWifiRetryMs = 0;
+int wifiManualRetryAttempts = WIFI_MANUAL_RETRY_DEFAULT;
+bool mdnsStarted = false;
 
 // Motor state / 电机状态
 struct MotorState {
@@ -69,38 +78,90 @@ void handleSerialCommand();
 // ────────────────────────────────────────────────────────────
 
 // ============================================================
-// WiFi 初始化（Station 模式只）
+// WiFi / mDNS
 // ============================================================
-void setupWiFi() {
+bool connectWifiWithAttempts(int attempts, bool verbose) {
+  attempts = constrain(attempts, 1, 120);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
   WiFi.begin(STA_SSID, STA_PASSWORD);
 
-  Serial.print("🔗 连接WiFi中");
-  int retry = 0;
-  while (WiFi.status() != WL_CONNECTED && retry < 20) {
-    delay(500);
-    Serial.print(".");
-    retry++;
+  if (verbose) Serial.print("[Net] Connecting");
+  for (int i = 0; i < attempts; i++) {
+    if (WiFi.status() == WL_CONNECTED) {
+      if (verbose) {
+        Serial.print("\n[Net] Connected, IP: ");
+        Serial.println(WiFi.localIP());
+      }
+      return true;
+    }
+    delay(WIFI_RETRY_DELAY_MS);
+    if (verbose) Serial.print(".");
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("\n✅ WiFi已连接，IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\n❌ WiFi连接失败，请检查 STA_SSID / STA_PASSWORD");
+  if (verbose) {
+    Serial.println("\n[Net] STA connect failed");
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void setupNetwork() {
+  if (!connectWifiWithAttempts(WIFI_BOOT_CONNECT_ATTEMPTS, true)) {
+    Serial.println("[Net] Boot without WiFi, auto-retry enabled");
   }
 }
 
-// ============================================================
-// mDNS 初始化
-// ============================================================
-void setupmDNS() {
-  if (MDNS.begin(MDNS_NAME)) {
-    Serial.printf("✅ mDNS 已启动: http://%s.local\n", MDNS_NAME);
-    MDNS.addService("osc", "udp", OSC_PORT);
-  } else {
-    Serial.println("❌ mDNS 启动失败");
+void ensureWifiConnected() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  unsigned long now = millis();
+  if (now - lastWifiRetryMs < WIFI_RETRY_INTERVAL_MS) return;
+  lastWifiRetryMs = now;
+  Serial.println("[Net] WiFi disconnected, retrying...");
+  connectWifiWithAttempts(WIFI_AUTO_RETRY_ATTEMPTS, false);
+}
+
+void setupMDNS() {
+  if (mdnsStarted) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!MDNS.begin(MDNS_NAME)) {
+    Serial.println("[Net] mDNS failed");
+    return;
   }
+  MDNS.addService("osc", "udp", OSC_PORT);
+  MDNS.addService("datt_flower", "tcp", OSC_PORT);
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_type", "kait");
+  MDNS.addServiceTxt("datt_flower", "tcp", "node_id", MDNS_NAME);
+  mdnsStarted = true;
+  Serial.printf("[Net] mDNS ready: %s.local\n", MDNS_NAME);
+}
+
+void ensureMDNS() {
+  if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
+    setupMDNS();
+  }
+}
+
+void printWifiStatus() {
+  wl_status_t st = WiFi.status();
+  Serial.println("\n=== WiFi Status ===");
+  Serial.printf("SSID: %s\n", STA_SSID);
+  Serial.printf("Status: %d\n", (int)st);
+  if (st == WL_CONNECTED) {
+    Serial.printf("IP: %d.%d.%d.%d\n", WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3]);
+    Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
+  } else {
+    Serial.println("IP: (not connected)");
+  }
+  Serial.println("===================\n");
+}
+
+void manualWifiRetry(int attempts) {
+  wifiManualRetryAttempts = constrain(attempts, 1, 120);
+  Serial.printf("[Net] Manual retry, attempts=%d\n", wifiManualRetryAttempts);
+  bool ok = connectWifiWithAttempts(wifiManualRetryAttempts, true);
+  if (ok) ensureMDNS();
 }
 
 // ============================================================
@@ -331,6 +392,8 @@ void handleSerialCommand() {
     Serial.println("\n=== 串口命令帮助 ===");
     Serial.println("motor <speed>  - 设置电机速度 (-255 ~ 255)");
     Serial.println("motion <mode>  - 执行运动模式 (1-6)");
+    Serial.println("wifi status    - 查看 WiFi 状态");
+    Serial.println("wifi retry <n> - 手动重试 WiFi 连接");
     Serial.println("stop           - 停止电机");
     Serial.println("info           - 显示设备信息");
     Serial.println("help           - 显示此帮助");
@@ -349,6 +412,12 @@ void handleSerialCommand() {
       motorState.isRunning ? "运行中" : "停止",
       motorState.currentSpeed);
     Serial.println("====================\n");
+  } else if (line.equals("wifi status")) {
+    printWifiStatus();
+  } else if (line.startsWith("wifi retry")) {
+    int attempts = wifiManualRetryAttempts;
+    sscanf(line.c_str(), "wifi retry %d", &attempts);
+    manualWifiRetry(attempts);
   }
 }
 
@@ -368,8 +437,8 @@ void setup() {
   Serial.println("\n========== F7OWER Kait Node v2 ==========");
   Serial.println("设置 WiFi 连接...");
 
-  setupWiFi();
-  setupmDNS();
+  setupNetwork();
+  setupMDNS();
 
   udp.begin(OSC_PORT);
   Serial.printf("✅ OSC 监听端口: %d\n", OSC_PORT);
@@ -399,6 +468,9 @@ void loop() {
 
   // 串口命令处理
   handleSerialCommand();
+
+  ensureWifiConnected();
+  ensureMDNS();
 
   // 自动序列（如果激活）
   runAutoSequence();

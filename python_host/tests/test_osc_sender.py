@@ -32,6 +32,9 @@ class TestOSCSender:
         sent = sender.send("test", "/motor1", 1, 128, source="auto")
         mock_client.send_message.assert_not_called()
         assert sent is False
+        history = sender.get_history(limit=1)
+        assert history[-1]["direction"] == "drop"
+        assert history[-1]["reason"] == "override_blocked"
 
     def test_override_allows_manual(self):
         sender = OSCSender()
@@ -59,6 +62,9 @@ class TestOSCSender:
         # Should not raise
         sent = sender.send("nonexistent", "/motor1", 1, 128, source="manual")
         assert sent is False
+        history = sender.get_history(limit=1)
+        assert history[-1]["direction"] == "drop"
+        assert history[-1]["reason"] == "unknown_target"
 
     def test_stop_all_ignores_override(self):
         sender = OSCSender()
@@ -82,6 +88,19 @@ class TestOSCSender:
         assert history
         assert history[-1]["address"] == "/state"
         assert history[-1]["args"] == ["relax"]
+        assert history[-1]["source"] == "manual"
+
+    def test_clear_history(self):
+        sender = OSCSender()
+        mock_client = MagicMock()
+        sender._clients["test"] = mock_client
+        sender._target_info["test"] = ("127.0.0.1", 8888)
+
+        sender.send_raw("test", "/state", ["relax"], source="manual")
+        assert sender.get_history(limit=5)
+
+        sender.clear_history()
+        assert sender.get_history(limit=5) == []
 
     def test_query_info_self_parsing(self):
         sender = OSCSender()

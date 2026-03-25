@@ -47,6 +47,7 @@ pid_log.csv
 *.mp4
 *.avi
 python_host/data/
+python_host/models/vit-emotion/model.safetensors
 
 # Arduino
 *.hex
