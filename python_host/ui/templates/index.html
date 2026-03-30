@@ -959,26 +959,29 @@
               <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setControlMode('face_tracking')">Face Tracking Priority</button>
               <button class="bg-indigo-700 hover:bg-indigo-600 rounded px-3 py-1" onclick="setControlMode('emotion_manual')">Emotion/Panel Priority</button>
             </div>
-            <div class="text-xs text-slate-400 mt-2">Tracking mode follows OSC coordinates while preserving firmware-side random eye behavior.</div>
+            <div class="text-xs text-slate-400 mt-2">TRACK mode follows OSC coordinates (blink remains firmware-side).</div>
           </div>
           <div class="bg-slate-900 rounded p-2">
-            <div class="mb-1 text-xs text-slate-400">Tracking Enable</div>
+            <div class="mb-1 text-xs text-slate-400">OSC Eye Mode (firmware /mode)</div>
             <div class="flex gap-2">
-              <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">Track ON</button>
-              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="setTrackingEnabled(false)">Track OFF</button>
+              <button class="bg-cyan-700 hover:bg-cyan-600 rounded px-3 py-1" onclick="sendEyeMode(0)">AUTO</button>
+              <button class="bg-emerald-700 hover:bg-emerald-600 rounded px-3 py-1" onclick="sendEyeMode(1)">TRACK</button>
+              <button class="bg-amber-700 hover:bg-amber-600 rounded px-3 py-1" onclick="sendEyeMode(2)">ANIM</button>
+            </div>
+            <div class="flex gap-2 mt-2">
+              <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="sendEyeTrackAuto(true)">Track Auto ON</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendEyeTrackAuto(false)">Track Auto OFF</button>
               <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
             </div>
           </div>
         </div>
 
         <div class="bg-slate-900 rounded p-2">
-          <div class="mb-2 text-xs text-slate-400">Demo_2 Animation Trigger (25 frames from MyAnim)</div>
+          <div class="mb-2 text-xs text-slate-400">Emotion -> Eye mode mapping (auto dispatch)</div>
           <div class="flex flex-wrap items-end gap-2">
-            <label class="text-xs text-slate-300">Loops
-              <input id="eyeAnimeLoops" type="number" min="1" max="20" value="1" class="bg-slate-700 rounded px-2 py-1 text-sm w-24">
-            </label>
-            <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendEyeAnime(0, document.getElementById('eyeAnimeLoops').value)">Play Eye Anime</button>
-            <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Recenter Gaze</button>
+            <span class="text-xs text-slate-300 bg-slate-800 rounded px-2 py-1">REST -> ANIM (2)</span>
+            <span class="text-xs text-slate-300 bg-slate-800 rounded px-2 py-1">SOOTHE -> AUTO (0)</span>
+            <span class="text-xs text-slate-300 bg-slate-800 rounded px-2 py-1">BLOOM/ALERT -> TRACK (1)</span>
           </div>
         </div>
 
@@ -1107,6 +1110,17 @@
       loops: clamp(parseInt(loops, 10) || 1, 1, 20),
     });
     await refreshHistory();
+  }
+
+  async function sendEyeMode(mode) {
+    const modeId = clamp(parseInt(mode, 10) || 0, 0, 2);
+    await sendRaw('/mode', [modeId]);
+    await refreshTrackingUI();
+  }
+
+  async function sendEyeTrackAuto(enabled) {
+    await sendRaw('/track/auto', [enabled ? 1 : 0]);
+    await refreshTrackingUI();
   }
 
   function updateSueOpenSpeedText(openPct, speed) {

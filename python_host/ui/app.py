@@ -145,6 +145,13 @@ def _selected_node_type():
     return "unknown"
 
 
+def _node_type_for_target(target_name):
+    with _devices_lock:
+        if target_name and target_name in _devices:
+            return _devices[target_name].get("node_type", "unknown")
+    return "unknown"
+
+
 def _emotion_target_devices():
     with _devices_lock:
         items = []
@@ -184,16 +191,27 @@ def _set_control_mode(mode: str, *, sync_target=True):
         if sync_target:
             target = _selected_target()
             if target:
-                osc.send_raw(target, "/track/mode", [1], source="manual")
-                osc.send_raw(target, "/track/auto", [1], source="manual")
+                node_type = _node_type_for_target(target)
+                if node_type == "eye_anime":
+                    osc.send_raw(target, "/mode", [1], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [1], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
     else:
         tracking_publisher.update_config(enabled=False)
         emotion_reactor.set_enabled(True)
         if sync_target:
             target = _selected_target()
             if target:
-                osc.send_raw(target, "/track/mode", [0], source="manual")
-                osc.send_raw(target, "/track/auto", [0], source="manual")
+                node_type = _node_type_for_target(target)
+                if node_type == "eye_anime":
+                    # In emotion/manual mode, default eye_anime to AUTO.
+                    osc.send_raw(target, "/mode", [0], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [0], source="manual")
+                    osc.send_raw(target, "/track/auto", [0], source="manual")
     return _control_mode
 
 
@@ -431,11 +449,21 @@ def api_devices_select():
         _selected_device = name
     mode = _get_control_mode()
     if mode == CONTROL_MODE_TRACKING:
-        osc.send_raw(_selected_device, "/track/mode", [1], source="manual")
-        osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        node_type = _selected_node_type()
+        if node_type == "eye_anime":
+            osc.send_raw(_selected_device, "/mode", [1], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        else:
+            osc.send_raw(_selected_device, "/track/mode", [1], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
     else:
-        osc.send_raw(_selected_device, "/track/mode", [0], source="manual")
-        osc.send_raw(_selected_device, "/track/auto", [0], source="manual")
+        node_type = _selected_node_type()
+        if node_type == "eye_anime":
+            osc.send_raw(_selected_device, "/mode", [0], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        else:
+            osc.send_raw(_selected_device, "/track/mode", [0], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [0], source="manual")
     return jsonify({"status": "ok", "selected": _selected_device})
 
 
@@ -642,8 +670,12 @@ def api_tracking_config():
             target = _selected_target()
             if target:
                 flag = 1 if payload.get("enabled") else 0
+                node_type = _node_type_for_target(target)
                 osc.send_raw(target, "/track/auto", [flag], source="manual")
-                osc.send_raw(target, "/track/mode", [flag], source="manual")
+                if node_type == "eye_anime":
+                    osc.send_raw(target, "/mode", [1 if flag else 0], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [flag], source="manual")
 
         serial_port = payload.get("serial_port") if "serial_port" in payload else None
         serial_baud = payload.get("serial_baud") if "serial_baud" in payload else None
@@ -815,7 +847,9 @@ def api_eye_animation():
 
     animation_id = int(d.get("animation_id", 0))
     loops = int(d.get("loops", 1))
-    sent = osc.send_eye_animation(target, animation_id, loops=loops, source="manual")
+    # New eye_anime firmware uses /mode (0=AUTO, 1=TRACK, 2=ANIM).
+    # Keep this endpoint as a compatibility shim.
+    sent = osc.send_eye_mode(target, 2, source="manual")
     return jsonify(
         {
             "status": "ok" if sent else "error",

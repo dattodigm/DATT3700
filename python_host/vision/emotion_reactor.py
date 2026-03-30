@@ -457,6 +457,17 @@ class EmotionReactor:
             }
             return mapping.get(flower_emotion)
 
+        if node == "eye_anime":
+            # Firmware mode mapping:
+            # 0=AUTO, 1=TRACK, 2=ANIM
+            mapping = {
+                "BLOOM": ("/mode", [1]),
+                "ALERT": ("/mode", [1]),
+                "SOOTHE": ("/mode", [0]),
+                "REST": ("/mode", [2]),
+            }
+            return mapping.get(flower_emotion)
+
         return None
 
     def _next_option(self, node_type, flower_emotion, options):
