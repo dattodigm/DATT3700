@@ -236,8 +236,15 @@ class OSCSender:
     # ------------------------------------------------------------------
 
     def send_eye_animation(self, target_name, animation_id, **kwargs):
-        """Reserved — will send TFT IPS eye animation commands."""
-        pass
+        """Send eye animation trigger for eye_anime firmware."""
+        loops = int(kwargs.get("loops", 1))
+        loops = max(1, min(20, loops))
+        return self.send_raw(
+            target_name,
+            "/eye/anime",
+            [int(animation_id), loops],
+            source=kwargs.get("source", "manual"),
+        )
 
     # ------------------------------------------------------------------
     # Lightweight request/reply helpers for discovery endpoints

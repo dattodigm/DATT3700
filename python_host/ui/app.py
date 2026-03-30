@@ -807,11 +807,24 @@ def api_sequences_save():
 
 @app.route("/api/eye_animation", methods=["POST"])
 def api_eye_animation():
-    """Reserved endpoint for TFT IPS eye animation commands."""
-    d = request.json
+    """Send eye animation command to eye_anime-capable nodes."""
+    d = request.json or {}
     target = _selected_target(d.get("target"))
-    osc.send_eye_animation(target, d.get("animation_id", 0))
-    return jsonify({"status": "stub_ok"})
+    if not target:
+        return jsonify({"status": "error", "message": "no selected target"}), 400
+
+    animation_id = int(d.get("animation_id", 0))
+    loops = int(d.get("loops", 1))
+    sent = osc.send_eye_animation(target, animation_id, loops=loops, source="manual")
+    return jsonify(
+        {
+            "status": "ok" if sent else "error",
+            "target": target,
+            "animation_id": animation_id,
+            "loops": max(1, min(20, loops)),
+            "sent": bool(sent),
+        }
+    )
 
 
 # ── ML perception endpoints ─────────────────────────────────

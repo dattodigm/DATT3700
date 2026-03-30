@@ -950,6 +950,44 @@
       return;
     }
 
+    if (nodeType === 'eye_anime') {
+      holder.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Control Priority Mode</div>
+            <div class="flex gap-2">
+              <button class="bg-cyan-600 hover:bg-cyan-500 rounded px-3 py-1" onclick="setControlMode('face_tracking')">Face Tracking Priority</button>
+              <button class="bg-indigo-700 hover:bg-indigo-600 rounded px-3 py-1" onclick="setControlMode('emotion_manual')">Emotion/Panel Priority</button>
+            </div>
+            <div class="text-xs text-slate-400 mt-2">Tracking mode follows OSC coordinates while preserving firmware-side random eye behavior.</div>
+          </div>
+          <div class="bg-slate-900 rounded p-2">
+            <div class="mb-1 text-xs text-slate-400">Tracking Enable</div>
+            <div class="flex gap-2">
+              <button class="bg-emerald-600 hover:bg-emerald-500 rounded px-3 py-1" onclick="setTrackingEnabled(true)">Track ON</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="setTrackingEnabled(false)">Track OFF</button>
+              <button class="bg-slate-600 hover:bg-slate-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Center</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 rounded p-2">
+          <div class="mb-2 text-xs text-slate-400">Demo_2 Animation Trigger (25 frames from MyAnim)</div>
+          <div class="flex flex-wrap items-end gap-2">
+            <label class="text-xs text-slate-300">Loops
+              <input id="eyeAnimeLoops" type="number" min="1" max="20" value="1" class="bg-slate-700 rounded px-2 py-1 text-sm w-24">
+            </label>
+            <button class="bg-amber-600 hover:bg-amber-500 rounded px-3 py-1" onclick="sendEyeAnime(0, document.getElementById('eyeAnimeLoops').value)">Play Eye Anime</button>
+            <button class="bg-indigo-600 hover:bg-indigo-500 rounded px-3 py-1" onclick="sendRaw('/track/center',[])">Recenter Gaze</button>
+          </div>
+        </div>
+
+        <div id="trackStatus" class="text-xs text-slate-400">Tracking status loading...</div>
+      `;
+      refreshTrackingUI();
+      return;
+    }
+
     if (nodeType === 'kait') {
       holder.innerHTML = `
         <div class="flex gap-2 flex-wrap">
@@ -1059,6 +1097,16 @@
     const g = parseInt(hex.substring(3, 5), 16);
     const b = parseInt(hex.substring(5, 7), 16);
     await sendRaw(`/led${id}`, [r, g, b]);
+  }
+
+  async function sendEyeAnime(animationId = 0, loops = 1) {
+    if (!selected) return;
+    await postJSON('/api/eye_animation', {
+      target: selected,
+      animation_id: parseInt(animationId, 10) || 0,
+      loops: clamp(parseInt(loops, 10) || 1, 1, 20),
+    });
+    await refreshHistory();
   }
 
   function updateSueOpenSpeedText(openPct, speed) {

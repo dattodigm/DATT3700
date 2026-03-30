@@ -128,7 +128,7 @@ class CoordinatePublisher:
                 target_name = self._get_selected_target()
                 if target_name:
                     node_type = str(self._get_selected_node_type() or "unknown").lower().strip()
-                    if node_type in ("sue", "face_track"):
+                    if node_type in ("sue", "face_track", "eye_anime"):
                         sent = self._osc.send_raw(
                             target_name,
                             "/track/norm",
