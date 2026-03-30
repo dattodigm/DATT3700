@@ -1,5 +1,7 @@
 """Tests for emotion reactor smoothing and node command mapping."""
 
+import random
+
 from python_host.vision.emotion_reactor import EmotionReactor
 
 
@@ -84,7 +86,35 @@ def test_reactor_kait_maps_rest_to_stop():
 
     reactor.update(perception={}, has_face=False)
     if osc.sent:
-        assert osc.sent[-1]["address"] in ("/stop", "/motion")
+        assert osc.sent[-1]["address"] == "/stop"
+
+
+def test_reactor_kait_rest_always_stop():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    assert reactor._command_for("kait", "REST") == ("/stop", [])
+
+
+def _norm_kait_cmd(cmd):
+    addr, args = cmd
+    return (addr, tuple(args))
+
+
+def test_reactor_kait_active_random_from_motion_and_motor_pool():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    bloom_ok = {("/motion", (2,)), ("/motion", (6,)), ("/motor", (200,))}
+    alert_ok = {("/motion", (3,)), ("/motion", (4,)), ("/motor", (230,))}
+    soothe_ok = {("/motion", (1,)), ("/motion", (5,)), ("/motor", (100,))}
+    for seed in range(300):
+        random.seed(seed)
+        assert _norm_kait_cmd(reactor._command_for("kait", "BLOOM")) in bloom_ok
+        random.seed(seed + 1)
+        assert _norm_kait_cmd(reactor._command_for("kait", "ALERT")) in alert_ok
+        random.seed(seed + 2)
+        assert _norm_kait_cmd(reactor._command_for("kait", "SOOTHE")) in soothe_ok
+
+    random.seed(0)
+    bloom_seen = {_norm_kait_cmd(reactor._command_for("kait", "BLOOM")) for _ in range(80)}
+    assert len(bloom_seen) == 3
 
 
 def test_reactor_update_config_changes_values():

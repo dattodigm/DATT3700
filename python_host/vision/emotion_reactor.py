@@ -1,5 +1,6 @@
 """Emotion reactor for mapping face emotion signals to node-safe OSC actions."""
 
+import random
 import time
 from collections import defaultdict
 
@@ -8,6 +9,25 @@ class EmotionReactor:
     """Smooths emotion detections and dispatches coarse flower-state commands."""
 
     FLOWER_STATES = ("BLOOM", "ALERT", "SOOTHE", "REST")
+
+    # Kait: each active emotion picks one command at random — /motion presets or sustained /motor.
+    KAIT_COMMAND_POOLS = {
+        "BLOOM": [
+            ("/motion", [2]),
+            ("/motion", [6]),
+            ("/motor", [200]),
+        ],
+        "ALERT": [
+            ("/motion", [3]),
+            ("/motion", [4]),
+            ("/motor", [230]),
+        ],
+        "SOOTHE": [
+            ("/motion", [1]),
+            ("/motion", [5]),
+            ("/motor", [100]),
+        ],
+    }
 
     # Human emotion -> flower emotion.
     HUMAN_TO_FLOWER = {
@@ -421,13 +441,12 @@ class EmotionReactor:
             return self._next_option(node, flower_emotion, options)
 
         if node == "kait":
-            options = {
-                "BLOOM": [("/motion", [2]), ("/motion", [6])],
-                "ALERT": [("/motion", [3]), ("/motion", [4])],
-                "SOOTHE": [("/motion", [1]), ("/motion", [5])],
-                "REST": [("/stop", [])],
-            }
-            return self._next_option(node, flower_emotion, options)
+            if flower_emotion == "REST":
+                return ("/stop", [])
+            pool = self.KAIT_COMMAND_POOLS.get(flower_emotion)
+            if not pool:
+                return None
+            return random.choice(pool)
 
         if node == "sylvie":
             mapping = {
