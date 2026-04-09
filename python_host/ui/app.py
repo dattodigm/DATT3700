@@ -153,10 +153,29 @@ def _node_type_for_target(target_name):
 
 
 def _emotion_target_devices():
+    with _control_mode_lock:
+        mode = _control_mode
+
     with _devices_lock:
+        selected_name = _selected_device
+        selected_node_type = "unknown"
+        if selected_name and selected_name in _devices:
+            selected_node_type = _devices[selected_name].get("node_type", "unknown")
+
+        # In face-tracking priority, avoid sending emotion commands to the
+        # actively tracked node (face_track / eye_anime / sue) to prevent
+        # command contention between /track/* and emotion presets.
+        suppress_selected = (
+            mode == CONTROL_MODE_TRACKING
+            and bool(selected_name)
+            and selected_node_type in ("face_track", "eye_anime", "sue")
+        )
+
         items = []
         for dev in _devices.values():
             if not dev.get("emotion_enabled"):
+                continue
+            if suppress_selected and dev.get("name") == selected_name:
                 continue
             items.append(
                 {
@@ -187,7 +206,6 @@ def _set_control_mode(mode: str, *, sync_target=True):
 
     if candidate == CONTROL_MODE_TRACKING:
         tracking_publisher.update_config(enabled=True)
-        emotion_reactor.set_enabled(False)
         if sync_target:
             target = _selected_target()
             if target:
@@ -200,7 +218,6 @@ def _set_control_mode(mode: str, *, sync_target=True):
                     osc.send_raw(target, "/track/auto", [1], source="manual")
     else:
         tracking_publisher.update_config(enabled=False)
-        emotion_reactor.set_enabled(True)
         if sync_target:
             target = _selected_target()
             if target:

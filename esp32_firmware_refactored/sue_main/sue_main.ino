@@ -55,10 +55,10 @@ Servo petalServo;
 const int SERVO_PIN = 4;
 const int SERVO_MIN_US = 500;
 const int SERVO_MAX_US = 2400;
-const int SERVO_SAFE_MIN_ANGLE = 66;
-const int SERVO_SAFE_MAX_ANGLE = 118;
-const int PETAL_CLOSED_ANGLE = 72;
-const int PETAL_OPEN_ANGLE = 110;
+const int SERVO_SAFE_MIN_ANGLE = 50;
+const int SERVO_SAFE_MAX_ANGLE = 130;
+const int PETAL_CLOSED_ANGLE = 50;
+const int PETAL_OPEN_ANGLE = 130;
 const int PETAL_ALERT_ANGLE = 88;
 
 enum PetalMode {

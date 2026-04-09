@@ -394,16 +394,18 @@ class EmotionReactor:
         for item in targets:
             target = item["name"]
             node_type = item["node_type"]
-            command = self._command_for(node_type=node_type, flower_emotion=self._current)
-            if command is None:
+            command_spec = self._command_for(node_type=node_type, flower_emotion=self._current)
+            commands = self._normalize_commands(command_spec)
+            if not commands:
                 continue
 
-            address, args = command
             serialized = {
                 "target": target,
                 "node_type": node_type,
-                "address": address,
-                "args": list(args),
+                "commands": [
+                    {"address": address, "args": list(args)}
+                    for address, args in commands
+                ],
                 "flower_emotion": self._current,
             }
 
@@ -414,11 +416,20 @@ class EmotionReactor:
             if last_ts > 0.0 and (now - last_ts) * 1000.0 < self._command_cooldown_ms:
                 continue
 
-            sent = self._osc.send_raw(target, address, list(args), source="auto")
-            if sent:
+            all_sent = True
+            sent_count = 0
+            for address, args in commands:
+                sent = self._osc.send_raw(target, address, list(args), source="auto")
+                if sent:
+                    sent_count += 1
+                else:
+                    all_sent = False
+
+            if sent_count > 0:
                 sent_any = True
                 self._last_command_ts_by_target[target] = now
-                self._last_command_by_target[target] = serialized
+                if all_sent:
+                    self._last_command_by_target[target] = serialized
 
         if sent_any:
             self._last_command_ts = now
@@ -468,7 +479,53 @@ class EmotionReactor:
             }
             return mapping.get(flower_emotion)
 
+        if node == "face_track":
+            # face_tracking firmware has no /state endpoint.
+            # Use direct flower pan/tilt poses so it can react even when this node
+            # is not the currently selected tracking target in the UI.
+            mapping = {
+                "BLOOM": [
+                    ("/flower1", [70, 95]),
+                    ("/flower2", [110, 95]),
+                    ("/flower3", [70, 125]),
+                    ("/flower4", [110, 125]),
+                ],
+                "ALERT": [
+                    ("/flower1", [45, 150]),
+                    ("/flower2", [135, 150]),
+                    ("/flower3", [55, 165]),
+                    ("/flower4", [125, 165]),
+                ],
+                "SOOTHE": [
+                    ("/flower1", [90, 130]),
+                    ("/flower2", [90, 130]),
+                    ("/flower3", [90, 145]),
+                    ("/flower4", [90, 145]),
+                ],
+                "REST": [("/track/center", [])],
+            }
+            return mapping.get(flower_emotion)
+
         return None
+
+    def _normalize_commands(self, command):
+        if command is None:
+            return []
+
+        if isinstance(command, tuple) and len(command) == 2:
+            address, args = command
+            return [(address, list(args or []))]
+
+        if isinstance(command, list):
+            out = []
+            for item in command:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    continue
+                address, args = item
+                out.append((address, list(args or [])))
+            return out
+
+        return []
 
     def _next_option(self, node_type, flower_emotion, options):
         pool = options.get(flower_emotion, [])

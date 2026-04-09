@@ -153,6 +153,41 @@ def test_reactor_dispatches_to_multiple_targets():
     assert "F7OWER_00" in targets
 
 
+def test_reactor_face_track_mapping_emits_supported_routes():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    bloom = reactor._command_for("face_track", "BLOOM")
+    alert = reactor._command_for("face_track", "ALERT")
+    soothe = reactor._command_for("face_track", "SOOTHE")
+    rest = reactor._command_for("face_track", "REST")
+
+    assert isinstance(bloom, list) and len(bloom) == 4
+    assert isinstance(alert, list) and len(alert) == 4
+    assert isinstance(soothe, list) and len(soothe) == 4
+    assert rest == [("/track/center", [])]
+    assert all(addr.startswith("/flower") for addr, _ in bloom)
+    assert all(addr.startswith("/flower") for addr, _ in alert)
+    assert all(addr.startswith("/flower") for addr, _ in soothe)
+
+
+def test_reactor_face_track_dispatch_sends_multiple_commands():
+    osc = DummyOSC()
+    reactor = EmotionReactor(
+        osc_sender=osc,
+        get_target_devices=lambda: [{"name": "face_track_1", "node_type": "face_track"}],
+        min_hold_ms=0,
+        command_cooldown_ms=0,
+    )
+
+    perception = {"vit_emotion": {"dominant": "happy", "confidence": 0.95, "scores": [0.0] * 7}}
+    reactor.update(perception=perception, has_face=True)
+    reactor.update(perception=perception, has_face=True)
+    reactor.update(perception=perception, has_face=True)
+
+    sent_for_face = [item for item in osc.sent if item["target"] == "face_track_1"]
+    flower_msgs = [item for item in sent_for_face if item["address"].startswith("/flower")]
+    assert len(flower_msgs) >= 4
+
+
 def test_sylvie_soothe_vs_rest_mapping():
     osc = DummyOSC()
     reactor = EmotionReactor(
