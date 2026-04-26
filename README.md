@@ -1,7 +1,7 @@
 # The Garden's Response - Interactive AI Flower Installation
 ## 机械花朵交互式 AI 艺术装置
 
-[English Version](./PORTFOLIO_EN.md) | [Repository README](../README.md)
+[English Version](./docs/PORTFOLIO_EN.md) 
 
 ![ESP32](https://img.shields.io/badge/ESP32-Embedded%20Systems-111111?style=flat-square)
 ![Physical Computing](https://img.shields.io/badge/Physical%20Computing-Kinetic%20Installation-2f855a?style=flat-square)
@@ -177,6 +177,7 @@ flowchart LR
 
     classDef poolNode fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000
 ```
+
 ```mermaid
 ---
 config:
@@ -278,16 +279,17 @@ flowchart TB
 我设计了这些面板与交互：
 
 - 实时镜像摄像头预览，并同步反转追踪发布的 X 坐标，符合观众对“镜子”的直觉。
-- 模仿 iOS 摄影/对焦手感的 2D 面板，用来控制 face tracking 节点的水平/垂直舵机。
-- Sylvie 双电机控制：正负速度、deadband、最小驱动力、停止按钮和 2D drive pad。
-- Sue 控制：花朵开闭程度、运动速率、眼睛开合、眼动 2D pad、眼动限位、眨眼、呼吸、瞳孔自动旋转。
-- Kait 控制：电机速度和预设动作模式。
+- 模仿 iOS 摄影/对焦手感的 2D 面板
+  - 用来控制 face tracking 节点的水平/垂直舵机。
+  - Sylvie 双电机控制：正负速度、deadband、最小驱动力、停止按钮和 2D drive pad。
+  - Sue 控制：花朵开闭程度、运动速率、眼睛开合、眼动 2D pad、眼动限位、眨眼、呼吸、瞳孔自动旋转。
+  - Kait 控制：电机速度和预设动作模式。
 - Emotion Reactor 的 safe / balanced / dramatic 调参预设。
 - mDNS、Gateway、Manual Add 三种发现方式，以及每个节点是否接收情绪路由的勾选。
 - Raw OSC Console 和历史记录，用于命令级调试。
 - 动作序列录制与回放，用于采集带标签的运动数据和复现编舞。
 
-另外，我在 [v0/kaminodice-06183338](https://github.com/dattodigm/DATT3700/tree/v0/kaminodice-06183338) 分支用 v0 做了更现代的 Next.js 前端。这个版本适合放在简历 Portfolio / Vercel 展示，但因为没有和原 Flask 路由完整回归测试，合并到稳定主分支会带来额外风险，所以目前只作为展示版本保留。
+另外，我在 [v0/kaminodice-06183338](https://github.com/dattodigm/DATT3700/tree/v0/kaminodice-06183338) 分支用 v0 做了更现代的 Next.js 前端。但因为没有和原 Flask 路由完整回归测试，合并到稳定主分支会带来额外风险，所以目前只作为展示版本保留。
 
 ## Showcase 现场可靠性插曲
 
@@ -390,7 +392,6 @@ DATT3700/
 - 视频流反馈、自主调试和离线训练闭环。
 - 将现代 Next.js Dashboard 与 Python Host API 完整联调。
 
-
 ```mermaid
 ---
 config:
@@ -446,8 +447,6 @@ flowchart TB
     Emotion_Dict -- "Asynchronous OSC <br>(Override / Emotion Tags)" --> Arbiter
     Arbiter -- "Smoothed Tracking / Sequence Playback" --> ESP32_Mesh
     
-
-    
     ESP32_Mesh --> Node_Tracking
     ESP32_Mesh --> Node_Sylvie
     ESP32_Mesh --> Node_Sue
@@ -472,14 +471,10 @@ flowchart TB
     style UI_Pipeline fill:none,stroke:#666,stroke-dasharray: 5 5
 ```
 
-
-
 ## Credits
 - ViT 参考实现：[yst002/EmotionDetector_deployment](https://github.com/yst002/EmotionDetector_deployment)
 - ViT 权重：[yst007/vit-emotion](https://huggingface.co/yst007/vit-emotion/tree/main)
 - 眼睛动画和 TFT 显示部分基于 Adafruit Uncanny Eyes 与 TFT_eSPI 生态进行学习、适配和二次开发。
-
-
 
 ## 我的职责
 
