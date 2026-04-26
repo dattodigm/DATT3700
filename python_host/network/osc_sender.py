@@ -227,6 +227,10 @@ class OSCSender:
     def send_track_norm(self, target_name, norm_x, norm_y, source="auto"):
         self.send(target_name, "/track/norm", float(norm_x), float(norm_y), source=source)
 
+    def send_eye_mode(self, target_name, mode, source="manual"):
+        mode_id = max(0, min(2, int(mode)))
+        return self.send_raw(target_name, "/mode", [mode_id], source=source)
+
     def stop_all(self, target_name):
         """Emergency stop — always sent regardless of override."""
         self.send(target_name, "/preset", 3, source="manual")
@@ -236,8 +240,10 @@ class OSCSender:
     # ------------------------------------------------------------------
 
     def send_eye_animation(self, target_name, animation_id, **kwargs):
-        """Reserved — will send TFT IPS eye animation commands."""
-        pass
+        """Compatibility helper: trigger ANIM mode on eye_anime firmware."""
+        _ = int(animation_id)
+        _ = int(kwargs.get("loops", 1))
+        return self.send_eye_mode(target_name, 2, source=kwargs.get("source", "manual"))
 
     # ------------------------------------------------------------------
     # Lightweight request/reply helpers for discovery endpoints

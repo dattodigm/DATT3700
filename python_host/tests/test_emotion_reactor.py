@@ -1,5 +1,7 @@
 """Tests for emotion reactor smoothing and node command mapping."""
 
+import random
+
 from python_host.vision.emotion_reactor import EmotionReactor
 
 
@@ -84,7 +86,35 @@ def test_reactor_kait_maps_rest_to_stop():
 
     reactor.update(perception={}, has_face=False)
     if osc.sent:
-        assert osc.sent[-1]["address"] in ("/stop", "/motion")
+        assert osc.sent[-1]["address"] == "/stop"
+
+
+def test_reactor_kait_rest_always_stop():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    assert reactor._command_for("kait", "REST") == ("/stop", [])
+
+
+def _norm_kait_cmd(cmd):
+    addr, args = cmd
+    return (addr, tuple(args))
+
+
+def test_reactor_kait_active_random_from_motion_and_motor_pool():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    bloom_ok = {("/motion", (2,)), ("/motion", (6,)), ("/motor", (200,))}
+    alert_ok = {("/motion", (3,)), ("/motion", (4,)), ("/motor", (230,))}
+    soothe_ok = {("/motion", (1,)), ("/motion", (5,)), ("/motor", (100,))}
+    for seed in range(300):
+        random.seed(seed)
+        assert _norm_kait_cmd(reactor._command_for("kait", "BLOOM")) in bloom_ok
+        random.seed(seed + 1)
+        assert _norm_kait_cmd(reactor._command_for("kait", "ALERT")) in alert_ok
+        random.seed(seed + 2)
+        assert _norm_kait_cmd(reactor._command_for("kait", "SOOTHE")) in soothe_ok
+
+    random.seed(0)
+    bloom_seen = {_norm_kait_cmd(reactor._command_for("kait", "BLOOM")) for _ in range(80)}
+    assert len(bloom_seen) == 3
 
 
 def test_reactor_update_config_changes_values():
@@ -121,6 +151,41 @@ def test_reactor_dispatches_to_multiple_targets():
     assert "sue_1" in targets
     assert "kait_1" in targets
     assert "F7OWER_00" in targets
+
+
+def test_reactor_face_track_mapping_emits_supported_routes():
+    reactor = EmotionReactor(osc_sender=DummyOSC())
+    bloom = reactor._command_for("face_track", "BLOOM")
+    alert = reactor._command_for("face_track", "ALERT")
+    soothe = reactor._command_for("face_track", "SOOTHE")
+    rest = reactor._command_for("face_track", "REST")
+
+    assert isinstance(bloom, list) and len(bloom) == 4
+    assert isinstance(alert, list) and len(alert) == 4
+    assert isinstance(soothe, list) and len(soothe) == 4
+    assert rest == [("/track/center", [])]
+    assert all(addr.startswith("/flower") for addr, _ in bloom)
+    assert all(addr.startswith("/flower") for addr, _ in alert)
+    assert all(addr.startswith("/flower") for addr, _ in soothe)
+
+
+def test_reactor_face_track_dispatch_sends_multiple_commands():
+    osc = DummyOSC()
+    reactor = EmotionReactor(
+        osc_sender=osc,
+        get_target_devices=lambda: [{"name": "face_track_1", "node_type": "face_track"}],
+        min_hold_ms=0,
+        command_cooldown_ms=0,
+    )
+
+    perception = {"vit_emotion": {"dominant": "happy", "confidence": 0.95, "scores": [0.0] * 7}}
+    reactor.update(perception=perception, has_face=True)
+    reactor.update(perception=perception, has_face=True)
+    reactor.update(perception=perception, has_face=True)
+
+    sent_for_face = [item for item in osc.sent if item["target"] == "face_track_1"]
+    flower_msgs = [item for item in sent_for_face if item["address"].startswith("/flower")]
+    assert len(flower_msgs) >= 4
 
 
 def test_sylvie_soothe_vs_rest_mapping():

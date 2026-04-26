@@ -5,12 +5,15 @@
     "F7OWER_01": {"node_type": "sylvie", "label": "Sylvie Client"},
     "F7OWER_kait": {"node_type": "kait", "label": "Kait Node"},
     "sue_1": {"node_type": "sue", "label": "Sue Node"},
-    "face_track_1": {"node_type": "face_track", "label": "Face Tracking Node"}
+    "face_track_1": {"node_type": "face_track", "label": "Face Tracking Node"},
+    "eye_anime_1": {"node_type": "eye_anime", "label": "Eye Anime Node"}
   },
   "name_rules": [
     {"contains": "f7ower", "node_type": "sylvie"},
     {"contains": "sylvie", "node_type": "sylvie"},
     {"contains": "sue", "node_type": "sue"},
+    {"contains": "eye_anime", "node_type": "eye_anime"},
+    {"contains": "anime", "node_type": "eye_anime"},
     {"contains": "face", "node_type": "face_track"},
     {"contains": "track", "node_type": "face_track"},
     {"contains": "kait", "node_type": "kait"}
@@ -27,6 +30,10 @@
     "face_track": {
       "label": "Face Tracking",
       "description": "8x Servo (4 pan/tilt pairs)"
+    },
+    "eye_anime": {
+      "label": "Eye Anime",
+      "description": "Animated_Eye12 with OSC tracking + frame animation"
     },
     "kait": {
       "label": "Kait",

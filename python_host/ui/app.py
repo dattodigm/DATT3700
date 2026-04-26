@@ -145,11 +145,37 @@ def _selected_node_type():
     return "unknown"
 
 
-def _emotion_target_devices():
+def _node_type_for_target(target_name):
     with _devices_lock:
+        if target_name and target_name in _devices:
+            return _devices[target_name].get("node_type", "unknown")
+    return "unknown"
+
+
+def _emotion_target_devices():
+    with _control_mode_lock:
+        mode = _control_mode
+
+    with _devices_lock:
+        selected_name = _selected_device
+        selected_node_type = "unknown"
+        if selected_name and selected_name in _devices:
+            selected_node_type = _devices[selected_name].get("node_type", "unknown")
+
+        # In face-tracking priority, avoid sending emotion commands to the
+        # actively tracked node (face_track / eye_anime / sue) to prevent
+        # command contention between /track/* and emotion presets.
+        suppress_selected = (
+            mode == CONTROL_MODE_TRACKING
+            and bool(selected_name)
+            and selected_node_type in ("face_track", "eye_anime", "sue")
+        )
+
         items = []
         for dev in _devices.values():
             if not dev.get("emotion_enabled"):
+                continue
+            if suppress_selected and dev.get("name") == selected_name:
                 continue
             items.append(
                 {
@@ -180,20 +206,29 @@ def _set_control_mode(mode: str, *, sync_target=True):
 
     if candidate == CONTROL_MODE_TRACKING:
         tracking_publisher.update_config(enabled=True)
-        emotion_reactor.set_enabled(False)
         if sync_target:
             target = _selected_target()
             if target:
-                osc.send_raw(target, "/track/mode", [1], source="manual")
-                osc.send_raw(target, "/track/auto", [1], source="manual")
+                node_type = _node_type_for_target(target)
+                if node_type == "eye_anime":
+                    osc.send_raw(target, "/mode", [1], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [1], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
     else:
         tracking_publisher.update_config(enabled=False)
-        emotion_reactor.set_enabled(True)
         if sync_target:
             target = _selected_target()
             if target:
-                osc.send_raw(target, "/track/mode", [0], source="manual")
-                osc.send_raw(target, "/track/auto", [0], source="manual")
+                node_type = _node_type_for_target(target)
+                if node_type == "eye_anime":
+                    # In emotion/manual mode, default eye_anime to AUTO.
+                    osc.send_raw(target, "/mode", [0], source="manual")
+                    osc.send_raw(target, "/track/auto", [1], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [0], source="manual")
+                    osc.send_raw(target, "/track/auto", [0], source="manual")
     return _control_mode
 
 
@@ -431,11 +466,21 @@ def api_devices_select():
         _selected_device = name
     mode = _get_control_mode()
     if mode == CONTROL_MODE_TRACKING:
-        osc.send_raw(_selected_device, "/track/mode", [1], source="manual")
-        osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        node_type = _selected_node_type()
+        if node_type == "eye_anime":
+            osc.send_raw(_selected_device, "/mode", [1], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        else:
+            osc.send_raw(_selected_device, "/track/mode", [1], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
     else:
-        osc.send_raw(_selected_device, "/track/mode", [0], source="manual")
-        osc.send_raw(_selected_device, "/track/auto", [0], source="manual")
+        node_type = _selected_node_type()
+        if node_type == "eye_anime":
+            osc.send_raw(_selected_device, "/mode", [0], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [1], source="manual")
+        else:
+            osc.send_raw(_selected_device, "/track/mode", [0], source="manual")
+            osc.send_raw(_selected_device, "/track/auto", [0], source="manual")
     return jsonify({"status": "ok", "selected": _selected_device})
 
 
@@ -642,8 +687,12 @@ def api_tracking_config():
             target = _selected_target()
             if target:
                 flag = 1 if payload.get("enabled") else 0
+                node_type = _node_type_for_target(target)
                 osc.send_raw(target, "/track/auto", [flag], source="manual")
-                osc.send_raw(target, "/track/mode", [flag], source="manual")
+                if node_type == "eye_anime":
+                    osc.send_raw(target, "/mode", [1 if flag else 0], source="manual")
+                else:
+                    osc.send_raw(target, "/track/mode", [flag], source="manual")
 
         serial_port = payload.get("serial_port") if "serial_port" in payload else None
         serial_baud = payload.get("serial_baud") if "serial_baud" in payload else None
@@ -807,11 +856,26 @@ def api_sequences_save():
 
 @app.route("/api/eye_animation", methods=["POST"])
 def api_eye_animation():
-    """Reserved endpoint for TFT IPS eye animation commands."""
-    d = request.json
+    """Send eye animation command to eye_anime-capable nodes."""
+    d = request.json or {}
     target = _selected_target(d.get("target"))
-    osc.send_eye_animation(target, d.get("animation_id", 0))
-    return jsonify({"status": "stub_ok"})
+    if not target:
+        return jsonify({"status": "error", "message": "no selected target"}), 400
+
+    animation_id = int(d.get("animation_id", 0))
+    loops = int(d.get("loops", 1))
+    # New eye_anime firmware uses /mode (0=AUTO, 1=TRACK, 2=ANIM).
+    # Keep this endpoint as a compatibility shim.
+    sent = osc.send_eye_mode(target, 2, source="manual")
+    return jsonify(
+        {
+            "status": "ok" if sent else "error",
+            "target": target,
+            "animation_id": animation_id,
+            "loops": max(1, min(20, loops)),
+            "sent": bool(sent),
+        }
+    )
 
 
 # ── ML perception endpoints ─────────────────────────────────
